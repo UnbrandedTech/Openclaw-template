@@ -1,0 +1,28 @@
+{
+  "auth": {
+    "profiles": {
+      "anthropic:default": {
+        "provider": "anthropic",
+        "mode": "token"
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "anthropic/claude-sonnet-4-6"
+      }
+    },
+    "list": [
+      {
+        "id": "main",
+        "model": "anthropic/claude-sonnet-4-6",
+        "heartbeat": {
+          "enabled": true,
+          "intervalMs": 1800000
+        }
+      }
+    ]
+  },
+  "_comment": "This is a starting template. See https://docs.openclaw.ai for full config reference."
+}

@@ -1,0 +1,55 @@
+#!/bin/bash
+# Set up Honcho memory system
+
+echo "Honcho setup options:"
+echo "  1. Cloud Honcho (honcho.dev, easiest)"
+echo "  2. Self-hosted (PostgreSQL + Ollama, more control)"
+echo ""
+ask "Which option? (1/2, default: 1)"
+HONCHO_OPTION="${REPLY:-1}"
+
+if [ "$HONCHO_OPTION" = "2" ]; then
+    # PostgreSQL
+    if ! command -v psql &>/dev/null; then
+        log "Installing PostgreSQL..."
+        brew install postgresql@16
+        brew services start postgresql@16
+        sleep 2
+    fi
+
+    # Create database
+    if ! psql -lqt | cut -d \| -f 1 | grep -qw honcho; then
+        createdb honcho
+        psql honcho -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
+        log "Created honcho database with pgvector"
+    else
+        log "honcho database already exists"
+    fi
+
+    # Ollama for embeddings
+    if ! command -v ollama &>/dev/null; then
+        log "Installing Ollama..."
+        brew install ollama
+    fi
+
+    # Start Ollama and pull embedding model
+    if ! pgrep -x ollama &>/dev/null; then
+        ollama serve &>/dev/null &
+        sleep 3
+    fi
+    ollama pull nomic-embed-text 2>/dev/null
+    log "Ollama ready with nomic-embed-text"
+
+    # Set keepalive
+    if ! grep -q "OLLAMA_KEEP_ALIVE" ~/.zshrc 2>/dev/null; then
+        echo 'export OLLAMA_KEEP_ALIVE=24h' >> ~/.zshrc
+    fi
+
+    log "Self-hosted Honcho ready (localhost:18790)"
+else
+    warn "Cloud Honcho selected. Sign up at honcho.dev and add your API key to the config."
+fi
+
+# Install Python client
+pip3 install --break-system-packages honcho-ai 2>/dev/null || pip3 install honcho-ai
+log "Honcho Python client installed"

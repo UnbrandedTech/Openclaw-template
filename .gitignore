@@ -1,0 +1,8 @@
+# Don't commit secrets
+*.env
+.slack_env
+.google_env
+node_modules/
+
+# OS
+.DS_Store
