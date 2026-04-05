@@ -2,9 +2,10 @@
 set -e
 
 # OpenClaw Setup
-# Usage: ./setup.sh [--skip-deps] [--skip-google] [--skip-slack] [--dry-run] [--no-wizard]
+# Usage: ./setup.sh [--skip-deps] [--skip-google] [--skip-slack] [--dry-run] [--no-wizard] [--from N]
 # --skip-google skips email & calendar tool setup (Phase 8)
 # --no-wizard   disables gum TUI and uses plain text prompts
+# --from N      restart from phase N (e.g., --from 7 to redo AI provider setup)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OPENCLAW_DIR="$HOME/.openclaw"
@@ -293,6 +294,7 @@ SKIP_GOOGLE=false
 SKIP_SLACK=false
 DRY_RUN=false
 WIZARD=true
+START_FROM=1
 
 for arg in "$@"; do
     case $arg in
@@ -301,8 +303,24 @@ for arg in "$@"; do
         --skip-slack)  SKIP_SLACK=true ;;
         --dry-run)     DRY_RUN=true ;;
         --no-wizard)   WIZARD=false ;;
+        --from)        :;;  # value handled below
+        [0-9]|[0-9][0-9]) START_FROM="$arg" ;;
     esac
 done
+# Handle --from N (two-arg form)
+while [ $# -gt 0 ]; do
+    if [ "$1" = "--from" ] && [ -n "${2:-}" ]; then
+        START_FROM="$2"
+        shift 2
+    else
+        shift
+    fi
+done
+
+# Helper: should we run this phase?
+should_run_phase() {
+    [ "$CURRENT_PHASE" -ge "$START_FROM" ]
+}
 
 # Activate wizard mode (gum-enhanced UI) if gum is available and not disabled
 if [ "$HAS_GUM" = false ]; then
@@ -313,11 +331,15 @@ _set_ui_mode
 # ── Welcome banner ─────────────────────────────────────────────────
 if [ "$WIZARD" = true ]; then
     echo ""
+    STARTING_MSG="This wizard will guide you through 12 steps."
+    if [ "$START_FROM" -gt 1 ]; then
+        STARTING_MSG="Resuming from Phase $START_FROM (skipping 1-$((START_FROM - 1)))."
+    fi
     gum style --border double --border-foreground 4 --padding "1 4" --bold --align center \
         "OpenClaw Setup Wizard" \
         "" \
         "Your AI assistant will be running in under 10 minutes." \
-        "This wizard will guide you through 12 steps."
+        "$STARTING_MSG"
     echo ""
 else
     echo ""
@@ -374,102 +396,122 @@ fi
 
 # ─── Phase 1: Dependencies ─────────────────────────────────────────
 
-if [ "$SKIP_DEPS" = false ]; then
-    CURRENT_PHASE=$((CURRENT_PHASE + 1))
+CURRENT_PHASE=1
+if [ "$SKIP_DEPS" = false ] && should_run_phase; then
     step "Phase 1: Installing dependencies"
     if [ "$WIZARD" = true ]; then
         gum style --faint --italic "Installing build tools, Node.js, Python, and other prerequisites."
         echo ""
     fi
     source "$SCRIPT_DIR/scripts/install_deps.sh"
-else
+elif [ "$SKIP_DEPS" = true ]; then
     warn "Skipping dependency installation"
+else
+    log "Skipping Phase 1 (--from $START_FROM)"
 fi
 
 # ─── Phase 2: OpenClaw ─────────────────────────────────────────────
 
-CURRENT_PHASE=$((CURRENT_PHASE + 1))
-step "Phase 2: Installing OpenClaw"
-if [ "$WIZARD" = true ]; then
-    gum style --faint --italic "Installing the OpenClaw agent platform and initializing your workspace."
-    echo ""
+CURRENT_PHASE=2
+if should_run_phase; then
+    step "Phase 2: Installing OpenClaw"
+    if [ "$WIZARD" = true ]; then
+        gum style --faint --italic "Installing the OpenClaw agent platform and initializing your workspace."
+        echo ""
+    fi
+    source "$SCRIPT_DIR/scripts/install_openclaw.sh"
+else
+    log "Skipping Phase 2 (--from $START_FROM)"
 fi
-source "$SCRIPT_DIR/scripts/install_openclaw.sh"
 
 # ─── Phase 3: Workspace Files ──────────────────────────────────────
 
-CURRENT_PHASE=$((CURRENT_PHASE + 1))
-step "Phase 3: Setting up workspace"
-if [ "$WIZARD" = true ]; then
-    gum style --faint --italic "Creating config files and templates your agent needs to operate."
-    echo ""
-fi
-
-mkdir -p "$WORKSPACE"/{memory,scripts,references,transcriptions,slack_messages}
-
-# Copy workspace templates (don't overwrite existing)
-for f in AGENTS.md SOUL.md USER.md IDENTITY.md HEARTBEAT.md TOOLS.md; do
-    if [ ! -f "$WORKSPACE/$f" ]; then
-        cp "$SCRIPT_DIR/workspace/$f" "$WORKSPACE/$f"
-        log "Created $f"
-    else
-        warn "$f already exists, skipping"
+CURRENT_PHASE=3
+if should_run_phase; then
+    step "Phase 3: Setting up workspace"
+    if [ "$WIZARD" = true ]; then
+        gum style --faint --italic "Creating config files and templates your agent needs to operate."
+        echo ""
     fi
-done
 
-# Copy dossier template
-cp "$SCRIPT_DIR/templates/dossier-template.md" "$WORKSPACE/references/"
-log "Copied dossier template"
+    mkdir -p "$WORKSPACE"/{memory,scripts,references,transcriptions,slack_messages}
 
-# Copy team config (don't overwrite — user may have customized it)
-if [ ! -f "$WORKSPACE/team.json" ]; then
-    cp "$SCRIPT_DIR/templates/team.json" "$WORKSPACE/team.json"
-    log "Created team.json (edit to match your team)"
+    # Copy workspace templates (don't overwrite existing)
+    for f in AGENTS.md SOUL.md USER.md IDENTITY.md HEARTBEAT.md TOOLS.md; do
+        if [ ! -f "$WORKSPACE/$f" ]; then
+            cp "$SCRIPT_DIR/workspace/$f" "$WORKSPACE/$f"
+            log "Created $f"
+        else
+            warn "$f already exists, skipping"
+        fi
+    done
+
+    # Copy dossier template
+    cp "$SCRIPT_DIR/templates/dossier-template.md" "$WORKSPACE/references/"
+    log "Copied dossier template"
+
+    # Copy team config (don't overwrite — user may have customized it)
+    if [ ! -f "$WORKSPACE/team.json" ]; then
+        cp "$SCRIPT_DIR/templates/team.json" "$WORKSPACE/team.json"
+        log "Created team.json (edit to match your team)"
+    else
+        warn "team.json already exists, skipping"
+    fi
 else
-    warn "team.json already exists, skipping"
+    log "Skipping Phase 3 (--from $START_FROM)"
 fi
 
 # ─── Phase 4: Sync Scripts ─────────────────────────────────────────
 
-CURRENT_PHASE=$((CURRENT_PHASE + 1))
-step "Phase 4: Installing sync scripts"
-if [ "$WIZARD" = true ]; then
-    gum style --faint --italic "Installing the Python scripts that sync your Slack, email, and calendar."
-    echo ""
+CURRENT_PHASE=4
+if should_run_phase; then
+    step "Phase 4: Installing sync scripts"
+    if [ "$WIZARD" = true ]; then
+        gum style --faint --italic "Installing the Python scripts that sync your Slack, email, and calendar."
+        echo ""
+    fi
+
+    for f in "$SCRIPT_DIR"/sync-scripts/*.py; do
+        fname=$(basename "$f")
+        cp "$f" "$WORKSPACE/scripts/$fname"
+    done
+    log "Copied $(ls "$SCRIPT_DIR"/sync-scripts/*.py | wc -l | tr -d ' ') scripts to workspace"
+
+    # Install Python dependencies for scripts
+    "$HOME/.openclaw/venv/bin/pip" install slack-sdk honcho-ai
+    log "Installed Python dependencies"
+else
+    log "Skipping Phase 4 (--from $START_FROM)"
 fi
-
-for f in "$SCRIPT_DIR"/sync-scripts/*.py; do
-    fname=$(basename "$f")
-    cp "$f" "$WORKSPACE/scripts/$fname"
-done
-log "Copied $(ls "$SCRIPT_DIR"/sync-scripts/*.py | wc -l | tr -d ' ') scripts to workspace"
-
-# Install Python dependencies for scripts
-"$HOME/.openclaw/venv/bin/pip" install slack-sdk honcho-ai
-log "Installed Python dependencies"
 
 # ─── Phase 5: Honcho ───────────────────────────────────────────────
 
-CURRENT_PHASE=$((CURRENT_PHASE + 1))
-step "Phase 5: Setting up Honcho (memory system)"
-if [ "$WIZARD" = true ]; then
-    gum style --faint --italic "Honcho is the AI's long-term memory. It remembers conversations and context."
-    echo ""
+CURRENT_PHASE=5
+if should_run_phase; then
+    step "Phase 5: Setting up Honcho (memory system)"
+    if [ "$WIZARD" = true ]; then
+        gum style --faint --italic "Honcho is the AI's long-term memory. It remembers conversations and context."
+        echo ""
+    fi
+    source "$SCRIPT_DIR/scripts/setup_honcho.sh"
+else
+    log "Skipping Phase 5 (--from $START_FROM)"
 fi
-source "$SCRIPT_DIR/scripts/setup_honcho.sh"
 
 # ─── Phase 6: Slack ────────────────────────────────────────────────
 
-if [ "$SKIP_SLACK" = false ]; then
-    CURRENT_PHASE=$((CURRENT_PHASE + 1))
+CURRENT_PHASE=6
+if [ "$SKIP_SLACK" = false ] && should_run_phase; then
     step "Phase 6: Setting up Slack"
     if [ "$WIZARD" = true ]; then
         gum style --faint --italic "Connecting to Slack so the agent can read messages and send you briefings."
         echo ""
     fi
     source "$SCRIPT_DIR/scripts/setup_slack.sh"
-else
+elif [ "$SKIP_SLACK" = true ]; then
     warn "Skipping Slack setup"
+else
+    log "Skipping Phase 6 (--from $START_FROM)"
 fi
 
 # ─── Keychain prompt ──────────────────────────────────────────────
@@ -520,7 +562,8 @@ fi
 
 # ─── Phase 7: AI Provider + Google Cloud ─────────────────────────
 
-CURRENT_PHASE=$((CURRENT_PHASE + 1))
+CURRENT_PHASE=7
+if should_run_phase; then
 step "Phase 7: AI provider setup"
 if [ "$WIZARD" = true ]; then
     gum style --faint --italic "Choose which AI service powers your agent. Vertex AI is recommended."
@@ -848,34 +891,45 @@ if [ "$AI_OK" = false ]; then
     warn "AI provider tests failed. Sync scripts may not work until resolved."
 fi
 
+else
+    log "Skipping Phase 7 (--from $START_FROM)"
+fi
+
 # ─── Phase 8: Email & Calendar tools ─────────────────────────────
 
-if [ "$SKIP_GOOGLE" = false ]; then
-    CURRENT_PHASE=$((CURRENT_PHASE + 1))
+CURRENT_PHASE=8
+if [ "$SKIP_GOOGLE" = false ] && should_run_phase; then
     step "Phase 8: Setting up email & calendar tools"
     if [ "$WIZARD" = true ]; then
         gum style --faint --italic "Connecting to your email and calendar so the agent can read transcripts and events."
         echo ""
     fi
     source "$SCRIPT_DIR/scripts/setup_email.sh"
-else
+elif [ "$SKIP_GOOGLE" = true ]; then
     warn "Skipping email & calendar setup"
+else
+    log "Skipping Phase 8 (--from $START_FROM)"
 fi
 
 # ─── Phase 9: Obsidian ──────────────────────────────────────────────
 
-CURRENT_PHASE=$((CURRENT_PHASE + 1))
-step "Phase 9: Setting up Obsidian vault"
-if [ "$WIZARD" = true ]; then
-    gum style --faint --italic "Creating folders for people dossiers and client profiles in your Obsidian vault."
-    echo ""
+CURRENT_PHASE=9
+if should_run_phase; then
+    step "Phase 9: Setting up Obsidian vault"
+    if [ "$WIZARD" = true ]; then
+        gum style --faint --italic "Creating folders for people dossiers and client profiles in your Obsidian vault."
+        echo ""
+    fi
+    source "$SCRIPT_DIR/scripts/setup_obsidian.sh"
+else
+    log "Skipping Phase 9 (--from $START_FROM)"
 fi
-source "$SCRIPT_DIR/scripts/setup_obsidian.sh"
 
 # ─── Phase 10: Personalization ────────────────────────────────────────
 # (Runs BEFORE data sync so user.json exists when scripts need USER_NAME)
 
-CURRENT_PHASE=$((CURRENT_PHASE + 1))
+CURRENT_PHASE=10
+if should_run_phase; then
 step "Phase 10: Personalization"
 if [ "$WIZARD" = true ]; then
     gum style --faint --italic "Tell us about yourself so the agent knows who it's working for."
@@ -982,9 +1036,14 @@ log "Created user.json"
 cp "$SCRIPT_DIR/templates/company-template.md" "$WORKSPACE/references/"
 log "Copied company profile template"
 
+else
+    log "Skipping Phase 10 (--from $START_FROM)"
+fi
+
 # ─── Phase 11: Full Workspace Sync + Discovery ───────────────────────
 
-CURRENT_PHASE=$((CURRENT_PHASE + 1))
+CURRENT_PHASE=11
+if should_run_phase; then
 step "Phase 11: Full workspace sync + discovery"
 
 if [ "$WIZARD" = true ]; then
@@ -1077,9 +1136,14 @@ else
     warn "  $VENV_PYTHON ~/.openclaw/workspace/scripts/generate_initial_dossiers.py --type all"
 fi
 
+else
+    log "Skipping Phase 11 (--from $START_FROM)"
+fi
+
 # ─── Phase 12: Start ────────────────────────────────────────────────
 
-CURRENT_PHASE=$((CURRENT_PHASE + 1))
+CURRENT_PHASE=12
+if should_run_phase; then
 step "Phase 12: Starting OpenClaw"
 if [ "$WIZARD" = true ]; then
     gum style --faint --italic "Starting the agent gateway and scheduling recurring jobs."
@@ -1101,6 +1165,10 @@ else
             source "$SCRIPT_DIR/scripts/setup_crons.sh"
         fi
     fi
+fi
+
+else
+    log "Skipping Phase 12 (--from $START_FROM)"
 fi
 
 # ─── Done ────────────────────────────────────────────────────────────
@@ -1133,6 +1201,12 @@ if [ "$WIZARD" = true ]; then
     gum style "  Your context: ~/.openclaw/workspace/USER.md"
     gum style "  Team config:  ~/.openclaw/workspace/team.json"
     echo ""
+    gum style --bold "Need to redo a step?"
+    echo ""
+    gum style "  ./setup.sh --from 7    # Restart from Phase 7 (AI provider)"
+    gum style "  ./setup.sh --from 10   # Redo personalization + sync"
+    gum style "  ./setup.sh --from 11   # Re-run workspace sync only"
+    echo ""
 else
     echo "Next steps:"
     echo "  1. Edit ~/.openclaw/workspace/SOUL.md with your agent's personality"
@@ -1140,6 +1214,8 @@ else
     echo "  3. Add API keys to ~/.openclaw/workspace/TOOLS.md"
     echo "  4. Start the TUI: openclaw tui"
     echo "  5. Say hello!"
+    echo ""
+    echo "To redo a step: ./setup.sh --from N (e.g., --from 7 for AI provider)"
     echo ""
 fi
 log "Done."

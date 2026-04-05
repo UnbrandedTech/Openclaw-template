@@ -11,6 +11,8 @@ git clone https://github.com/UnbrandedTech/Openclaw-template.git
 cd Openclaw-template
 ./setup.sh              # Interactive wizard (uses gum TUI if available)
 ./setup.sh --no-wizard  # Plain text prompts (no gum)
+./setup.sh --from 7     # Restart from a specific phase (e.g., redo AI provider)
+./uninstall.sh          # Remove OpenClaw (workspace, cron jobs, keychain entries)
 ```
 
 ## What It Does
@@ -99,6 +101,7 @@ Depends on your provider. Vertex AI default: ~$4-5/month (Gemini Flash for 95% o
 
 ```
 setup.sh                          # Main orchestrator (12 phases)
+uninstall.sh                      # Remove OpenClaw (workspace, crons, keychain)
 scripts/                          # One-time setup scripts
   install_deps.sh                 # Dependencies (Homebrew/apt/dnf), Node, Python, gcloud, venv
   install_openclaw.sh             # OpenClaw CLI + workspace init

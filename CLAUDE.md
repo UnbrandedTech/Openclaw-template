@@ -11,6 +11,7 @@ A self-configuring setup kit for OpenClaw — an AI agent platform. The setup sc
 ```bash
 ./setup.sh                    # Full setup (12 phases, interactive wizard)
 ./setup.sh --no-wizard        # Plain text mode (no gum TUI)
+./setup.sh --from 7           # Restart from phase N (skips earlier phases)
 ./setup.sh --skip-deps        # Skip Homebrew/Node/Python install
 ./setup.sh --skip-google      # Skip Google Workspace setup
 ./setup.sh --skip-slack       # Skip Slack setup
@@ -46,7 +47,8 @@ Step 5: Generate Dossiers (fast model)
 
 ### Directory Layout
 
-- **`setup.sh`** — Orchestrator. 12 phases, sources scripts from `scripts/`.
+- **`setup.sh`** — Orchestrator. 12 phases, sources scripts from `scripts/`. Supports `--from N` to restart from a specific phase.
+- **`uninstall.sh`** — Removes `~/.openclaw`, cron jobs, keychain entries, vdirsyncer config. `--include-vault` also removes Obsidian People/Clients dirs.
 - **`scripts/`** — One-time setup scripts. Each is idempotent.
 - **`sync-scripts/`** — Python scripts for cron + setup. Copied to `~/.openclaw/workspace/scripts/`.
 - **`workspace/`** — Agent identity markdown files. Copied to `~/.openclaw/workspace/`.
