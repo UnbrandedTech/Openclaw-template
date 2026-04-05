@@ -38,7 +38,7 @@ Then it sets up recurring cron jobs so the agent keeps everything current.
 - macOS 14+ or Linux (Ubuntu/Debian, Fedora/RHEL, Arch)
 - Google Cloud project with Vertex AI enabled (for AI model access)
 - Slack workspace (bot token + user token)
-- Google Workspace or Gmail account
+- Email account — Google Workspace, or any IMAP provider (Outlook, iCloud, Fastmail, etc.)
 - ~$5/month in Vertex AI costs (Gemini Flash for most jobs, Claude Sonnet for dossier merging only)
 
 ## How It Works
@@ -49,7 +49,7 @@ Then it sets up recurring cron jobs so the agent keeps everything current.
 |-------|-------------|
 | 1-4 | Install dependencies, OpenClaw, workspace files, sync scripts |
 | 5-6 | Configure Honcho memory system + Slack integration |
-| 7-8 | Single Google login (Vertex AI + Gmail + Calendar + Drive), set up workspace tools |
+| 7-8 | Google Cloud auth (Vertex AI + Workspace), email & calendar tool setup (Google/IMAP/CalDAV) |
 | 9 | Create Obsidian vault structure |
 | 10 | Personalization (name, email, timezone auto-detected, GitHub opt-in, services-biz flag) |
 | 11 | **Full workspace sync + AI discovery** (the 5-step pipeline) |
@@ -97,7 +97,7 @@ scripts/                          # One-time setup scripts
   install_openclaw.sh             # OpenClaw CLI + workspace init
   setup_honcho.sh                 # Honcho memory system (cloud default)
   setup_slack.sh                  # Slack bot/user tokens
-  setup_google.sh                 # gogcli + vdirsyncer (uses shared OAuth)
+  setup_email.sh                  # Email (gogcli or IMAP) + calendar (Google or CalDAV) setup
   setup_obsidian.sh               # Vault directory structure
   setup_crons.sh                  # Register cron jobs with OpenClaw
 
@@ -109,7 +109,7 @@ sync-scripts/                     # Python scripts (run on cron + during setup)
   honcho_slack_sync.py            # Push Slack → Honcho
   honcho_obsidian_sync.py         # Bidirectional Obsidian ↔ Honcho
   honcho_write.py                 # CLI to push facts to Honcho
-  sync_meeting_transcripts.py     # Gmail → transcripts + action item extraction
+  sync_meeting_transcripts.py     # Email (Gmail/IMAP) → transcripts + action item extraction
   sync_calendar.py                # Parse calendar .ics → structured JSON
   sync_github.py                  # GitHub PRs/issues (optional)
   load_to_honcho.py               # Push transcripts/calendar/GitHub → Honcho
@@ -149,7 +149,6 @@ After setup, edit files at `~/.openclaw/workspace/`:
 See [open issues](https://github.com/UnbrandedTech/Openclaw-template/issues) for planned work:
 
 - [Any model provider (OpenAI, Bedrock, Ollama)](https://github.com/UnbrandedTech/Openclaw-template/issues/2)
-- [Personal email (IMAP) support](https://github.com/UnbrandedTech/Openclaw-template/issues/3)
 - [Slack alternatives (Teams, Discord)](https://github.com/UnbrandedTech/Openclaw-template/issues/4)
 - [Notion instead of Obsidian](https://github.com/UnbrandedTech/Openclaw-template/issues/5)
 - [Hosted Honcho support](https://github.com/UnbrandedTech/Openclaw-template/issues/6)

@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
 """
-sync_meeting_transcripts.py — Pull meeting transcripts from Gmail, save locally,
+sync_meeting_transcripts.py — Pull meeting transcripts from email, save locally,
 extract action items for the user, and update TODO.md + Obsidian daily note.
 
-Supports: Gemini Notes, Grain, Fireflies, Otter, Fathom, MeetGeek, TL;DV.
+Supports email providers:
+  - Google Workspace (via gogcli)
+  - IMAP (any provider: Outlook, iCloud, Fastmail, ProtonMail Bridge, etc.)
+
+Supports transcript sources: Gemini Notes, Grain, Fireflies, Otter, Fathom, MeetGeek, TL;DV.
 
 Usage: python3 sync_meeting_transcripts.py [--full] [--skip-actions]
   --full:          Re-scan everything (ignore state, don't re-download existing files)
   --skip-actions:  Only download transcripts, skip action item extraction
 """
 
+import email as email_lib
+import email.header
+import email.utils
+import imaplib
 import json
 import os
 import re
@@ -19,12 +27,16 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-from shared import WORKSPACE, VAULT_PATH, save_json as _atomic_save_json, USER_NAME, script_lock
+from shared import WORKSPACE, VAULT_PATH, save_json as _atomic_save_json, USER_NAME, script_lock, load_json
 
 EMAILS_DIR = WORKSPACE / "transcriptions"
 STATE_FILE = WORKSPACE / "memory/transcript-sync-state.json"
 GOG = Path.home() / ".local/bin/gog"
 ACCOUNT = os.environ.get("GOG_ACCOUNT", "")
+
+# Load email provider config from user.json
+_user_cfg = load_json(WORKSPACE / "user.json")
+EMAIL_PROVIDER = _user_cfg.get("email_provider", "google")
 
 # Gmail search queries for known transcript sources
 QUERIES = [
@@ -86,6 +98,156 @@ def gog_read(thread_id: str) -> str:
         print(f"  Read failed for thread {thread_id}: {result.stderr[:200]}")
         return ""
     return result.stdout
+
+
+# ── IMAP email functions ───────────────────────────────────────────────────
+
+
+def _imap_connect() -> imaplib.IMAP4_SSL:
+    """Connect to the configured IMAP server."""
+    server = _user_cfg.get("imap_server", "")
+    port = int(_user_cfg.get("imap_port", 993))
+    username = _user_cfg.get("imap_username", "")
+    password = os.environ.get("IMAP_PASSWORD", "")
+
+    if not all([server, username, password]):
+        print("ERROR: IMAP not configured.", file=sys.stderr)
+        print("  Set imap_server/imap_username in user.json and IMAP_PASSWORD in .env", file=sys.stderr)
+        sys.exit(1)
+
+    conn = imaplib.IMAP4_SSL(server, port)
+    conn.login(username, password)
+    return conn
+
+
+def _decode_header(raw: str) -> str:
+    """Decode a potentially RFC2047-encoded email header."""
+    if not raw:
+        return ""
+    parts = email.header.decode_header(raw)
+    decoded = []
+    for data, charset in parts:
+        if isinstance(data, bytes):
+            decoded.append(data.decode(charset or "utf-8", errors="replace"))
+        else:
+            decoded.append(data)
+    return " ".join(decoded)
+
+
+def _query_to_imap_criteria(query: str) -> str:
+    """Convert a gogcli-style query string to IMAP SEARCH criteria."""
+    from_match = re.match(r'from:(\S+)', query, re.IGNORECASE)
+    subject_match = re.search(r'subject:"([^"]+)"', query, re.IGNORECASE)
+
+    parts = []
+    if from_match:
+        parts.append(f'FROM "{from_match.group(1)}"')
+    if subject_match:
+        parts.append(f'SUBJECT "{subject_match.group(1)}"')
+
+    return " ".join(parts) if parts else "ALL"
+
+
+def imap_search(query: str, max_results: int = 50) -> list[dict]:
+    """Search for emails via IMAP matching the given query."""
+    criteria = _query_to_imap_criteria(query)
+    try:
+        conn = _imap_connect()
+        conn.select("INBOX", readonly=True)
+
+        status, data = conn.search(None, criteria)
+        if status != "OK" or not data[0]:
+            conn.close()
+            conn.logout()
+            return []
+
+        ids = data[0].split()
+        ids = ids[-max_results:]  # most recent N
+
+        threads = []
+        for mid in ids:
+            status, msg_data = conn.fetch(mid, "(BODY.PEEK[HEADER])")
+            if status != "OK":
+                continue
+            raw = msg_data[0][1]
+            msg = email_lib.message_from_bytes(raw)
+            threads.append({
+                "id": mid.decode(),
+                "from": _decode_header(msg.get("from", "")),
+                "date": msg.get("date", ""),
+                "subject": _decode_header(msg.get("subject", "")),
+            })
+
+        conn.close()
+        conn.logout()
+        return threads
+    except Exception as e:
+        print(f"  IMAP search error for '{query}': {e}", file=sys.stderr)
+        return []
+
+
+def imap_read(msg_id: str) -> str:
+    """Read an email's full content via IMAP, returning JSON similar to gog output."""
+    try:
+        conn = _imap_connect()
+        conn.select("INBOX", readonly=True)
+
+        status, msg_data = conn.fetch(msg_id.encode(), "(RFC822)")
+        if status != "OK":
+            conn.close()
+            conn.logout()
+            return ""
+
+        raw = msg_data[0][1]
+        msg = email_lib.message_from_bytes(raw)
+
+        # Extract text content
+        text_parts = []
+        if msg.is_multipart():
+            for part in msg.walk():
+                ct = part.get_content_type()
+                if ct == "text/plain":
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        text_parts.append(payload.decode("utf-8", errors="replace"))
+        else:
+            payload = msg.get_payload(decode=True)
+            if payload:
+                text_parts.append(payload.decode("utf-8", errors="replace"))
+
+        result = [{
+            "from": _decode_header(msg.get("from", "")),
+            "date": msg.get("date", ""),
+            "subject": _decode_header(msg.get("subject", "")),
+            "body": "\n".join(text_parts),
+        }]
+
+        conn.close()
+        conn.logout()
+        return json.dumps(result)
+    except Exception as e:
+        print(f"  IMAP read error for message {msg_id}: {e}", file=sys.stderr)
+        return ""
+
+
+# ── Dispatch: pick search/read functions based on provider ─────────────────
+
+
+def search_emails(query: str, max_results: int = 50) -> list[dict]:
+    """Search for emails using the configured provider."""
+    if EMAIL_PROVIDER == "imap":
+        return imap_search(query, max_results)
+    return gog_search(query, max_results)
+
+
+def read_email(thread_id: str) -> str:
+    """Read an email thread/message using the configured provider."""
+    if EMAIL_PROVIDER == "imap":
+        return imap_read(thread_id)
+    return gog_read(thread_id)
+
+
+# ── Source detection ───────────────────────────────────────────────────────
 
 
 def detect_source(from_addr: str) -> str:
@@ -318,15 +480,15 @@ def save_state(state: dict):
 # ── Main ────────────────────────────────────────────────────────────────────
 
 def main():
-    if not ACCOUNT:
-        print("ERROR: Set GOG_ACCOUNT environment variable.", file=sys.stderr)
+    if EMAIL_PROVIDER == "google" and not ACCOUNT:
+        print("ERROR: Set GOG_ACCOUNT environment variable (email_provider is 'google').", file=sys.stderr)
         sys.exit(1)
 
     full_mode = "--full" in sys.argv
     skip_actions = "--skip-actions" in sys.argv
 
     with script_lock("sync_meeting_transcripts"):
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Syncing meeting transcripts...")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Syncing meeting transcripts (provider: {EMAIL_PROVIDER})...")
         EMAILS_DIR.mkdir(parents=True, exist_ok=True)
 
         state = load_state()
@@ -336,7 +498,7 @@ def main():
         all_threads = {}
         for query in QUERIES:
             print(f"  Searching: {query}")
-            threads = gog_search(query, MAX_PER_QUERY)
+            threads = search_emails(query, MAX_PER_QUERY)
             for t in threads:
                 all_threads[t["id"]] = t
             print(f"    Found {len(threads)} threads")
@@ -369,7 +531,7 @@ def main():
                 downloaded.add(tid)
             else:
                 print(f"  Downloading: {subject}")
-                raw = gog_read(tid)
+                raw = read_email(tid)
                 if not raw:
                     errors += 1
                     continue
