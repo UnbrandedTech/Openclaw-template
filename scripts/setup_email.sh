@@ -30,8 +30,12 @@ if [ "$EMAIL_PROVIDER" = "google" ]; then
         echo "Installing gogcli..."
         TMPDIR=$(mktemp -d)
         if ! command -v make &>/dev/null; then
-            err "Cannot build gogcli: 'make' not found. Install Xcode CLI tools first:"
-            err "  xcode-select --install"
+            err "Cannot build gogcli: 'make' not found."
+            if [ "$PLATFORM" = "macos" ]; then
+                err "  Install Xcode CLI tools: xcode-select --install"
+            else
+                err "  Install build tools: sudo apt-get install build-essential (Debian) or sudo dnf install make gcc (Fedora)"
+            fi
             warn "Skipping gogcli installation."
         else
             (
@@ -45,7 +49,7 @@ if [ "$EMAIL_PROVIDER" = "google" ]; then
             rm -rf "$TMPDIR"
 
             if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
-                echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+                echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
                 export PATH="$HOME/.local/bin:$PATH"
             fi
             log "gogcli installed to ~/.local/bin/gog"

@@ -20,7 +20,7 @@ What should happen.
 What actually happens.
 
 ## Environment
-- macOS version:
+- OS (macOS version or Linux distro):
 - Python version:
 - Node.js version:
 - OpenClaw version:
