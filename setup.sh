@@ -3,6 +3,7 @@ set -e
 
 # OpenClaw Setup
 # Usage: ./setup.sh [--skip-deps] [--skip-google] [--skip-slack] [--dry-run]
+# --skip-google skips email & calendar tool setup (Phase 8)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OPENCLAW_DIR="$HOME/.openclaw"
@@ -493,13 +494,13 @@ if [ "$AI_OK" = false ]; then
     warn "AI provider tests failed. Sync scripts may not work until resolved."
 fi
 
-# ─── Phase 8: Google Workspace tools ──────────────────────────────
+# ─── Phase 8: Email & Calendar tools ─────────────────────────────
 
 if [ "$SKIP_GOOGLE" = false ]; then
-    step "Phase 8: Setting up Google Workspace tools"
-    source "$SCRIPT_DIR/scripts/setup_google.sh"
+    step "Phase 8: Setting up email & calendar tools"
+    source "$SCRIPT_DIR/scripts/setup_email.sh"
 else
-    warn "Skipping Google Workspace setup"
+    warn "Skipping email & calendar setup"
 fi
 
 # ─── Phase 9: Obsidian ──────────────────────────────────────────────
@@ -599,7 +600,12 @@ cat > "$WORKSPACE/user.json" << USERJSON
   "name_keywords": ${NAME_KEYWORDS},
   "title": "${USER_TITLE:-}",
   "company": "${USER_COMPANY:-}",
-  "services_business": $SERVICES_BIZ
+  "services_business": $SERVICES_BIZ,
+  "email_provider": "${EMAIL_PROVIDER:-google}",
+  "imap_server": "${IMAP_SERVER:-}",
+  "imap_port": ${IMAP_PORT:-993},
+  "imap_username": "${IMAP_USERNAME:-}",
+  "calendar_provider": "${CALENDAR_PROVIDER:-google}"
 }
 USERJSON
 log "Created user.json"

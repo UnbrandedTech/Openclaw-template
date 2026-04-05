@@ -25,8 +25,8 @@ Python dependencies install into `~/.openclaw/venv`. Cron jobs use `~/.openclaw/
 ```
 Step 1: Download
   Slack API (3mo)    → slack_messages/*.jsonl
-  Gmail (gogcli)     → transcriptions/*.txt
-  vdirsyncer (.ics)  → calendar_events.json + calendar_attendees.json
+  Email (gogcli/IMAP) → transcriptions/*.txt
+  vdirsyncer (.ics)   → calendar_events.json + calendar_attendees.json
   gh CLI (optional)  → github_activity.json
 
 Step 2: Filter
@@ -65,7 +65,7 @@ Step 5: Generate Dossiers (fast model)
 | `honcho_slack_sync.py` | Push Slack JSONL → Honcho sessions |
 | `honcho_obsidian_sync.py` | Bidirectional Obsidian ↔ Honcho sync |
 | `honcho_write.py` | CLI to push facts/conclusions into Honcho |
-| `sync_meeting_transcripts.py` | Gmail → transcripts + action item extraction |
+| `sync_meeting_transcripts.py` | Email (Gmail/IMAP) → transcripts + action item extraction |
 | `sync_calendar.py` | Parse vdirsyncer .ics → calendar events + attendee frequency |
 | `sync_github.py` | GitHub PRs/issues via `gh` CLI (optional) |
 | `load_to_honcho.py` | Push transcripts + calendar + GitHub → Honcho |
@@ -105,8 +105,8 @@ Model roles (`fast`, `reasoning`) are mapped to specific provider/model in `open
 - **Google Cloud SDK** — Required for Vertex AI provider (`gcloud auth application-default login`)
 - **Honcho** — Memory system (cloud or self-hosted)
 - **Python packages** — See `requirements.txt` (installed into venv)
-- **gogcli** — Google OAuth CLI for Gmail
-- **vdirsyncer + khal** — CalDAV calendar sync
+- **gogcli** — Google OAuth CLI for Gmail (only if using Google email provider)
+- **vdirsyncer + khal** — Calendar sync (Google Calendar or CalDAV)
 - **gh** — GitHub CLI (optional)
 - **icalendar** — Python library for .ics calendar parsing
 
@@ -127,7 +127,8 @@ Model roles (`fast`, `reasoning`) are mapped to specific provider/model in `open
 | `OBSIDIAN_VAULT` | `~/Documents/Obsidian Vault` | shared.py, setup_obsidian.sh |
 | `HONCHO_BASE_URL` | `http://localhost:18790` | shared.py |
 | `HONCHO_WORKSPACE` | `openclaw` | shared.py |
-| `GOG_ACCOUNT` | (required for email sync) | sync_meeting_transcripts.py |
+| `GOG_ACCOUNT` | (required for Google email) | sync_meeting_transcripts.py |
+| `IMAP_PASSWORD` | — | sync_meeting_transcripts.py (if using IMAP provider) |
 | `SLACK_USER_TOKEN` | — | slack_sync.py |
 | `OPENAI_API_KEY` | — | shared.py (if using OpenAI provider) |
 | `ANTHROPIC_API_KEY` | — | shared.py (if using Anthropic provider) |
