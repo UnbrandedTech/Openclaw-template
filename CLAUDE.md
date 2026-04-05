@@ -117,7 +117,7 @@ Models accessed via Vertex AI. Sonnet only for the daily EOD job. Everything els
 - State files written atomically via `save_json()` (temp + `os.replace`).
 - No hardcoded names, IDs, or company data — everything from `user.json` + `team.json`.
 - All config auto-discovered during setup, editable afterward.
-- `sed -i ''` in setup.sh is macOS-specific (Linux support tracked in issue #1).
+- `sedi()` wrapper in setup.sh handles cross-platform `sed -i` (macOS needs `''` arg, Linux doesn't).
 
 ## Environment Variables
 

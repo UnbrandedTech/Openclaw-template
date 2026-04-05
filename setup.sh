@@ -1,12 +1,43 @@
 #!/bin/bash
 set -e
 
-# OpenClaw Setup — Fresh Mac
+# OpenClaw Setup
 # Usage: ./setup.sh [--skip-deps] [--skip-google] [--skip-slack] [--dry-run]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OPENCLAW_DIR="$HOME/.openclaw"
 WORKSPACE="$OPENCLAW_DIR/workspace"
+
+# ── OS detection ────────────────────────────────────────────────────
+OS="$(uname -s)"
+case "$OS" in
+    Darwin) PLATFORM="macos" ;;
+    Linux)  PLATFORM="linux" ;;
+    *)      echo "Unsupported OS: $OS"; exit 1 ;;
+esac
+
+# Detect Linux distro family
+DISTRO=""
+if [ "$PLATFORM" = "linux" ]; then
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        case "$ID" in
+            ubuntu|debian|pop|mint|elementary) DISTRO="debian" ;;
+            fedora|rhel|centos|rocky|alma)     DISTRO="fedora" ;;
+            arch|manjaro)                       DISTRO="arch" ;;
+            *)                                 DISTRO="$ID" ;;
+        esac
+    fi
+fi
+
+# Detect user shell config file
+if [ -n "$ZSH_VERSION" ] || [ "$(basename "$SHELL")" = "zsh" ]; then
+    SHELL_RC="$HOME/.zshrc"
+    SHELL_PROFILE="$HOME/.zprofile"
+else
+    SHELL_RC="$HOME/.bashrc"
+    SHELL_PROFILE="$HOME/.profile"
+fi
 
 # Colors
 RED='\033[0;31m'
@@ -20,6 +51,51 @@ warn() { echo -e "${YELLOW}[!]${NC} $1"; }
 err()  { echo -e "${RED}[✗]${NC} $1"; }
 step() { echo -e "\n${BLUE}━━━ $1 ━━━${NC}\n"; }
 ask()  { echo -e "${YELLOW}$1${NC}"; read -r REPLY; }
+
+# Cross-platform sed -i (macOS needs '' arg, Linux doesn't)
+sedi() {
+    if [ "$PLATFORM" = "macos" ]; then
+        sed -i '' "$@"
+    else
+        sed -i "$@"
+    fi
+}
+
+# Cross-platform package install
+pkg_install() {
+    if [ "$PLATFORM" = "macos" ]; then
+        brew install "$@"
+    elif [ "$DISTRO" = "debian" ]; then
+        sudo apt-get install -y "$@"
+    elif [ "$DISTRO" = "fedora" ]; then
+        sudo dnf install -y "$@"
+    elif [ "$DISTRO" = "arch" ]; then
+        sudo pacman -S --noconfirm "$@"
+    else
+        err "Cannot install $* — unknown distro. Install manually."
+        return 1
+    fi
+}
+
+# Cross-platform cask/GUI app install
+pkg_install_cask() {
+    if [ "$PLATFORM" = "macos" ]; then
+        brew install --cask "$@"
+    elif [ "$DISTRO" = "debian" ]; then
+        # Most GUI apps need snap or flatpak on Linux
+        if command -v snap &>/dev/null; then
+            sudo snap install "$@"
+        elif command -v flatpak &>/dev/null; then
+            warn "Install $* via Flatpak or download from the project website."
+        else
+            warn "Install $* manually — no snap or flatpak available."
+        fi
+    else
+        warn "Install $* manually for your platform."
+    fi
+}
+
+log "Detected platform: $PLATFORM${DISTRO:+ ($DISTRO)}"
 
 SKIP_DEPS=false
 SKIP_GOOGLE=false
@@ -120,7 +196,11 @@ ALL_SCOPES="https://www.googleapis.com/auth/cloud-platform,https://www.googleapi
 # 1. Check gcloud is installed
 if ! command -v gcloud &>/dev/null; then
     err "gcloud CLI not found. Install it:"
-    err "  brew install --cask google-cloud-sdk"
+    if [ "$PLATFORM" = "macos" ]; then
+        err "  brew install --cask google-cloud-sdk"
+    else
+        err "  See https://cloud.google.com/sdk/docs/install#linux"
+    fi
     GCP_OK=false
 fi
 
@@ -273,7 +353,15 @@ USER_NAME="$REPLY"
 ask "What's your first name?"
 USER_FIRST="$REPLY"
 
-DETECTED_TZ=$(readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||')
+DETECTED_TZ=""
+if [ "$PLATFORM" = "macos" ]; then
+    DETECTED_TZ=$(readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||')
+elif command -v timedatectl &>/dev/null; then
+    DETECTED_TZ=$(timedatectl show -p Timezone --value 2>/dev/null || true)
+fi
+if [ -z "$DETECTED_TZ" ]; then
+    DETECTED_TZ=$(readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||' || true)
+fi
 if [ -n "$DETECTED_TZ" ]; then
     log "Detected timezone: $DETECTED_TZ"
     ask "Use $DETECTED_TZ as your timezone? (y/n, or type a different one)"
@@ -312,18 +400,18 @@ if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]; then
 fi
 
 if [ -n "$USER_NAME" ]; then
-    sed -i '' "s/\[YOUR NAME\]/$USER_NAME/g" "$WORKSPACE/USER.md" 2>/dev/null || true
-    sed -i '' "s/\[YOUR NAME\]/$USER_NAME/g" "$WORKSPACE/SOUL.md" 2>/dev/null || true
+    sedi "s/\[YOUR NAME\]/$USER_NAME/g" "$WORKSPACE/USER.md" 2>/dev/null || true
+    sedi "s/\[YOUR NAME\]/$USER_NAME/g" "$WORKSPACE/SOUL.md" 2>/dev/null || true
     log "Set name: $USER_NAME"
 fi
 
 if [ -n "$USER_TZ" ]; then
-    sed -i '' "s|America/Denver|$USER_TZ|g" "$WORKSPACE/USER.md" 2>/dev/null || true
+    sedi "s|America/Denver|$USER_TZ|g" "$WORKSPACE/USER.md" 2>/dev/null || true
     log "Set timezone: $USER_TZ"
 fi
 
 if [ -n "$USER_EMAIL" ]; then
-    sed -i '' "s/\[YOUR EMAIL\]/$USER_EMAIL/g" "$WORKSPACE/TOOLS.md" 2>/dev/null || true
+    sedi "s/\[YOUR EMAIL\]/$USER_EMAIL/g" "$WORKSPACE/TOOLS.md" 2>/dev/null || true
     log "Set email: $USER_EMAIL"
 fi
 

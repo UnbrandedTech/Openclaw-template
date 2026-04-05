@@ -35,7 +35,7 @@ Then it sets up recurring cron jobs so the agent keeps everything current.
 
 ## What You Need
 
-- macOS 14+ (Linux support: [#1](https://github.com/UnbrandedTech/Openclaw-template/issues/1))
+- macOS 14+ or Linux (Ubuntu/Debian, Fedora/RHEL, Arch)
 - Google Cloud project with Vertex AI enabled (for AI model access)
 - Slack workspace (bot token + user token)
 - Google Workspace or Gmail account
@@ -93,7 +93,7 @@ Step 5: Generate dossiers (Gemini Flash)
 ```
 setup.sh                          # Main orchestrator (12 phases)
 scripts/                          # One-time setup scripts
-  install_deps.sh                 # Homebrew, Node, Python, gcloud, venv
+  install_deps.sh                 # Dependencies (Homebrew/apt/dnf), Node, Python, gcloud, venv
   install_openclaw.sh             # OpenClaw CLI + workspace init
   setup_honcho.sh                 # Honcho memory system (cloud default)
   setup_slack.sh                  # Slack bot/user tokens
@@ -148,7 +148,6 @@ After setup, edit files at `~/.openclaw/workspace/`:
 
 See [open issues](https://github.com/UnbrandedTech/Openclaw-template/issues) for planned work:
 
-- [Linux support](https://github.com/UnbrandedTech/Openclaw-template/issues/1)
 - [Any model provider (OpenAI, Bedrock, Ollama)](https://github.com/UnbrandedTech/Openclaw-template/issues/2)
 - [Personal email (IMAP) support](https://github.com/UnbrandedTech/Openclaw-template/issues/3)
 - [Slack alternatives (Teams, Discord)](https://github.com/UnbrandedTech/Openclaw-template/issues/4)

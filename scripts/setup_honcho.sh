@@ -16,8 +16,17 @@ if [ "$HONCHO_OPTION" = "2" ]; then
     # PostgreSQL
     if ! command -v psql &>/dev/null; then
         log "Installing PostgreSQL..."
-        brew install postgresql@16
-        brew services start postgresql@16
+        if [ "$PLATFORM" = "macos" ]; then
+            brew install postgresql@16
+            brew services start postgresql@16
+        elif [ "$DISTRO" = "debian" ]; then
+            sudo apt-get install -y postgresql postgresql-client
+            sudo systemctl enable --now postgresql
+        elif [ "$DISTRO" = "fedora" ]; then
+            sudo dnf install -y postgresql-server postgresql
+            sudo postgresql-setup --initdb 2>/dev/null || true
+            sudo systemctl enable --now postgresql
+        fi
         sleep 2
     fi
 
@@ -33,7 +42,11 @@ if [ "$HONCHO_OPTION" = "2" ]; then
     # Ollama for embeddings
     if ! command -v ollama &>/dev/null; then
         log "Installing Ollama..."
-        brew install ollama
+        if [ "$PLATFORM" = "macos" ]; then
+            brew install ollama
+        else
+            curl -fsSL https://ollama.com/install.sh | sh
+        fi
     fi
 
     # Start Ollama and pull embedding model
@@ -45,8 +58,8 @@ if [ "$HONCHO_OPTION" = "2" ]; then
     log "Ollama ready with nomic-embed-text"
 
     # Set keepalive
-    if ! grep -q "OLLAMA_KEEP_ALIVE" ~/.zshrc 2>/dev/null; then
-        echo 'export OLLAMA_KEEP_ALIVE=24h' >> ~/.zshrc
+    if ! grep -q "OLLAMA_KEEP_ALIVE" "$SHELL_RC" 2>/dev/null; then
+        echo 'export OLLAMA_KEEP_ALIVE=24h' >> "$SHELL_RC"
     fi
 
     log "Self-hosted Honcho ready (localhost:18790)"

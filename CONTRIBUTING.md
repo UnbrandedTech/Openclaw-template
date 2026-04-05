@@ -8,7 +8,7 @@ Thanks for your interest in contributing! This guide will help you get started.
 
 - Check [existing issues](https://github.com/UnbrandedTech/Openclaw-template/issues) first to avoid duplicates
 - Use the **Bug Report** issue template
-- Include your macOS version, Python version, and Node.js version
+- Include your OS (macOS version or Linux distro), Python version, and Node.js version
 - Include relevant logs or error messages
 
 ### Suggesting Features
@@ -50,7 +50,7 @@ pip install -r requirements.txt
 
 ## Code Style
 
-- **Shell scripts**: Use `set -e`, check before installing (idempotent), use functions for logical groupings
+- **Shell scripts**: Use `set -e`, check before installing (idempotent), use `sedi()` instead of `sed -i`, use `$PLATFORM`/`$DISTRO` guards for OS-specific commands
 - **Python scripts**: Follow PEP 8, use type hints where practical, import from `shared.py` for common utilities
 - **Config changes**: Update `config.py` — don't scatter constants across scripts
 
