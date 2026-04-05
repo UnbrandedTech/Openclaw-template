@@ -1,0 +1,9 @@
+# Default owner for everything
+* @UnbrandedTech
+
+# Sync scripts — review carefully for security
+/sync-scripts/ @UnbrandedTech
+
+# Setup scripts — review carefully for system changes
+/setup.sh @UnbrandedTech
+/scripts/ @UnbrandedTech
