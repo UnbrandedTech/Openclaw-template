@@ -262,7 +262,7 @@ def _call_openai(profiles: dict, model_name: str, prompt: str, max_tokens: int) 
     base_url = profile.get("base_url", "https://api.openai.com/v1")
 
     if not api_key:
-        print("ERROR: OpenAI API key not set. Check env var: " + api_key_env, file=sys.stderr)
+        print("ERROR: OPENAI_API_KEY not set (or custom key from openclaw.json auth profile).", file=sys.stderr)
         sys.exit(1)
 
     url = f"{base_url}/chat/completions"
@@ -297,7 +297,7 @@ def _call_anthropic(profiles: dict, model_name: str, prompt: str, max_tokens: in
     api_key = os.environ.get(api_key_env, "")
 
     if not api_key:
-        print("ERROR: Anthropic API key not set. Check env var: " + api_key_env, file=sys.stderr)
+        print("ERROR: ANTHROPIC_API_KEY not set (or custom key from openclaw.json auth profile).", file=sys.stderr)
         sys.exit(1)
 
     url = "https://api.anthropic.com/v1/messages"
