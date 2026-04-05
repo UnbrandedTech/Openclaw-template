@@ -1,15 +1,17 @@
 #!/bin/bash
 # Set up Honcho memory system
 
-echo "Honcho setup options:"
-echo "  1. Cloud Honcho (honcho.dev, easiest)"
-echo "  2. Self-hosted (PostgreSQL + Ollama, more control)"
-echo ""
 if [ "${HONCHO_SELF_HOSTED:-}" = "true" ]; then
     HONCHO_OPTION="2"
 else
-    HONCHO_OPTION="1"
-    log "Using Cloud Honcho (default). Set HONCHO_SELF_HOSTED=true to self-host."
+    wizard_choose "How would you like to run Honcho (the AI's memory system)?" \
+        "Cloud Honcho (honcho.dev, easiest)" \
+        "Self-hosted (PostgreSQL + Ollama, more control)"
+
+    case "$REPLY" in
+        *Self-hosted*|2) HONCHO_OPTION="2" ;;
+        *)               HONCHO_OPTION="1" ;;
+    esac
 fi
 
 if [ "$HONCHO_OPTION" = "2" ]; then
