@@ -9,7 +9,8 @@ One script. One login. Your AI assistant is running in under 10 minutes.
 ```bash
 git clone https://github.com/UnbrandedTech/Openclaw-template.git
 cd Openclaw-template
-./setup.sh
+./setup.sh              # Interactive wizard (uses gum TUI if available)
+./setup.sh --no-wizard  # Plain text prompts (no gum)
 ```
 
 ## What It Does
@@ -43,7 +44,11 @@ Then it sets up recurring cron jobs so the agent keeps everything current.
 
 ## How It Works
 
-### Setup Flow (12 phases, fully guided)
+### Setup Flow (12 phases, interactive wizard)
+
+The setup wizard uses [gum](https://github.com/charmbracelet/gum) for styled prompts, selection menus, spinners, and progress indicators. If gum is not installed, it falls back to plain text prompts. Use `--no-wizard` to force plain mode.
+
+Features: pre-flight checks, visual progress ("Step 3 of 12"), step explanations, error recovery (retry/skip/abort), and a post-setup walkthrough.
 
 | Phase | What happens |
 |-------|-------------|
@@ -102,6 +107,7 @@ scripts/                          # One-time setup scripts
   setup_email.sh                  # Email (gogcli or IMAP) + calendar (Google or CalDAV) setup
   setup_obsidian.sh               # Vault directory structure
   setup_crons.sh                  # Register cron jobs with OpenClaw
+  install_deps.sh installs gum    # TUI toolkit for the wizard (optional)
 
 sync-scripts/                     # Python scripts (run on cron + during setup)
   shared.py                       # Shared utilities, path constants, user config, call_llm(), get_secret()

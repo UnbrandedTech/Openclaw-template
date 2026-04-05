@@ -2,8 +2,9 @@
 set -e
 
 # OpenClaw Setup
-# Usage: ./setup.sh [--skip-deps] [--skip-google] [--skip-slack] [--dry-run]
+# Usage: ./setup.sh [--skip-deps] [--skip-google] [--skip-slack] [--dry-run] [--no-wizard]
 # --skip-google skips email & calendar tool setup (Phase 8)
+# --no-wizard   disables gum TUI and uses plain text prompts
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OPENCLAW_DIR="$HOME/.openclaw"
@@ -47,11 +48,178 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-log()  { echo -e "${GREEN}[✓]${NC} $1"; }
-warn() { echo -e "${YELLOW}[!]${NC} $1"; }
-err()  { echo -e "${RED}[✗]${NC} $1"; }
-step() { echo -e "\n${BLUE}━━━ $1 ━━━${NC}\n"; }
-ask()  { echo -e "${YELLOW}$1${NC}"; read -r REPLY; }
+# ── Wizard / TUI detection ─────────────────────────────────────────
+HAS_GUM=false
+if command -v gum &>/dev/null; then
+    HAS_GUM=true
+fi
+
+TOTAL_PHASES=12
+CURRENT_PHASE=0
+
+# Plain-mode UI (fallback)
+_log_plain()  { echo -e "${GREEN}[✓]${NC} $1"; }
+_warn_plain() { echo -e "${YELLOW}[!]${NC} $1"; }
+_err_plain()  { echo -e "${RED}[✗]${NC} $1"; }
+_step_plain() { echo -e "\n${BLUE}━━━ $1 ━━━${NC}\n"; }
+_ask_plain()  { echo -e "${YELLOW}$1${NC}"; read -r REPLY; }
+
+# Gum-enhanced UI
+_log_gum()  { gum style --foreground 2 "✓ $1"; }
+_warn_gum() { gum style --foreground 3 "! $1"; }
+_err_gum()  { gum style --foreground 1 --bold "✗ $1"; }
+_step_gum() {
+    echo ""
+    gum style --border rounded --border-foreground 4 --padding "0 2" --bold \
+        "[$CURRENT_PHASE/$TOTAL_PHASES] $1"
+    echo ""
+}
+_ask_gum() {
+    # gum input with the prompt as header
+    gum style --foreground 3 "$1"
+    REPLY=$(gum input --placeholder "Type your answer..." --width 60) || REPLY=""
+}
+
+# wizard_choose: present a selection menu
+# Usage: wizard_choose "Header text" "option1" "option2" ...
+# Sets REPLY to selected option
+wizard_choose() {
+    local header="$1"; shift
+    if [ "$HAS_GUM" = true ] && [ "$WIZARD" = true ]; then
+        gum style --foreground 4 "$header"
+        REPLY=$(gum choose "$@") || REPLY=""
+    else
+        echo -e "${BLUE}${header}${NC}"
+        local i=1
+        for opt in "$@"; do
+            echo "  $i) $opt"
+            i=$((i + 1))
+        done
+        echo ""
+        echo -e "${YELLOW}Choose (1-$#):${NC}"
+        read -r REPLY
+    fi
+}
+
+# wizard_confirm: yes/no confirmation
+# Usage: wizard_confirm "Question?" && echo "yes" || echo "no"
+wizard_confirm() {
+    if [ "$HAS_GUM" = true ] && [ "$WIZARD" = true ]; then
+        gum confirm "$1"
+    else
+        echo -e "${YELLOW}$1 (y/n)${NC}"
+        read -r REPLY
+        [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]
+    fi
+}
+
+# wizard_input: text input with placeholder
+# Usage: wizard_input "Label" "placeholder" [--password]
+wizard_input() {
+    local label="$1" placeholder="${2:-}" password="${3:-}"
+    if [ "$HAS_GUM" = true ] && [ "$WIZARD" = true ]; then
+        gum style --foreground 3 "$label"
+        if [ "$password" = "--password" ]; then
+            REPLY=$(gum input --placeholder "$placeholder" --password --width 60) || REPLY=""
+        else
+            REPLY=$(gum input --placeholder "$placeholder" --width 60) || REPLY=""
+        fi
+    else
+        echo -e "${YELLOW}${label}${NC}"
+        read -r REPLY
+    fi
+}
+
+# wizard_spin: run a command with a spinner
+# Usage: wizard_spin "message" command arg1 arg2 ...
+wizard_spin() {
+    local msg="$1"; shift
+    if [ "$HAS_GUM" = true ] && [ "$WIZARD" = true ]; then
+        gum spin --spinner dot --title "$msg" -- "$@"
+    else
+        echo -n "  $msg... "
+        "$@"
+        echo "done"
+    fi
+}
+
+# run_phase: execute a phase with error recovery
+# Usage: run_phase "Phase name" "explanation" command_or_function
+run_phase() {
+    local name="$1" explanation="$2"
+    shift 2
+    CURRENT_PHASE=$((CURRENT_PHASE + 1))
+    step "$name"
+
+    if [ "$HAS_GUM" = true ] && [ "$WIZARD" = true ] && [ -n "$explanation" ]; then
+        gum style --faint --italic "$explanation"
+        echo ""
+    fi
+
+    # Run the remaining args as the phase body
+    # (phases are inline, so this is used for sourced scripts)
+    if [ $# -gt 0 ]; then
+        local attempt=1
+        while true; do
+            if "$@" 2>&1; then
+                return 0
+            else
+                local exit_code=$?
+                err "Step failed (exit code $exit_code)"
+                if [ "$HAS_GUM" = true ] && [ "$WIZARD" = true ]; then
+                    local action
+                    action=$(gum choose "Retry" "Skip this step" "Abort setup") || action="Abort setup"
+                    case "$action" in
+                        "Retry")
+                            attempt=$((attempt + 1))
+                            warn "Retrying (attempt $attempt)..."
+                            continue
+                            ;;
+                        "Skip this step")
+                            warn "Skipped: $name"
+                            return 0
+                            ;;
+                        "Abort setup")
+                            err "Setup aborted by user."
+                            exit 1
+                            ;;
+                    esac
+                else
+                    ask "Retry (r), skip (s), or abort (a)?"
+                    case "$REPLY" in
+                        r|R) attempt=$((attempt + 1)); warn "Retrying..."; continue ;;
+                        s|S) warn "Skipped: $name"; return 0 ;;
+                        *)   err "Setup aborted."; exit 1 ;;
+                    esac
+                fi
+            fi
+        done
+    fi
+}
+
+# Set active UI functions based on wizard mode
+_set_ui_mode() {
+    if [ "$HAS_GUM" = true ] && [ "$WIZARD" = true ]; then
+        log()  { _log_gum "$@"; }
+        warn() { _warn_gum "$@"; }
+        err()  { _err_gum "$@"; }
+        step() { _step_gum "$@"; }
+        ask()  { _ask_gum "$@"; }
+    else
+        log()  { _log_plain "$@"; }
+        warn() { _warn_plain "$@"; }
+        err()  { _err_plain "$@"; }
+        step() { _step_plain "$@"; }
+        ask()  { _ask_plain "$@"; }
+    fi
+}
+
+# Default to plain mode (wizard mode set after arg parsing)
+log()  { _log_plain "$@"; }
+warn() { _warn_plain "$@"; }
+err()  { _err_plain "$@"; }
+step() { _step_plain "$@"; }
+ask()  { _ask_plain "$@"; }
 
 # Cross-platform sed -i (macOS needs '' arg, Linux doesn't)
 sedi() {
@@ -124,6 +292,7 @@ SKIP_DEPS=false
 SKIP_GOOGLE=false
 SKIP_SLACK=false
 DRY_RUN=false
+WIZARD=true
 
 for arg in "$@"; do
     case $arg in
@@ -131,13 +300,87 @@ for arg in "$@"; do
         --skip-google) SKIP_GOOGLE=true ;;
         --skip-slack)  SKIP_SLACK=true ;;
         --dry-run)     DRY_RUN=true ;;
+        --no-wizard)   WIZARD=false ;;
     esac
 done
+
+# Activate wizard mode (gum-enhanced UI) if gum is available and not disabled
+if [ "$HAS_GUM" = false ]; then
+    WIZARD=false
+fi
+_set_ui_mode
+
+# ── Welcome banner ─────────────────────────────────────────────────
+if [ "$WIZARD" = true ]; then
+    echo ""
+    gum style --border double --border-foreground 4 --padding "1 4" --bold --align center \
+        "OpenClaw Setup Wizard" \
+        "" \
+        "Your AI assistant will be running in under 10 minutes." \
+        "This wizard will guide you through 12 steps."
+    echo ""
+else
+    echo ""
+    echo "=== OpenClaw Setup ==="
+    echo ""
+fi
+
+# ─── Pre-flight checks ─────────────────────────────────────────────
+
+if [ "$WIZARD" = true ]; then
+    CURRENT_PHASE=0
+    step "Pre-flight Checks"
+    gum style --faint --italic "Making sure you have everything needed before we begin."
+    echo ""
+    PREFLIGHT_OK=true
+
+    echo -n "  Internet connection... "
+    if curl -s --connect-timeout 5 https://api.github.com >/dev/null 2>&1; then
+        log "Connected"
+    else
+        err "No internet connection"
+        PREFLIGHT_OK=false
+    fi
+
+    echo -n "  Disk space... "
+    FREE_MB=$(df -m "$HOME" 2>/dev/null | awk 'NR==2{print $4}')
+    if [ -n "$FREE_MB" ] && [ "$FREE_MB" -gt 500 ]; then
+        log "${FREE_MB}MB free"
+    else
+        warn "Low disk space (${FREE_MB:-unknown}MB). At least 500MB recommended."
+    fi
+
+    echo ""
+    gum style --bold "Before continuing, make sure you have:"
+    echo ""
+    gum style "  • Slack workspace admin access (for bot/user tokens)"
+    gum style "  • Google account or IMAP email credentials"
+    gum style "  • An AI provider API key (or use Ollama for free local)"
+    echo ""
+
+    if ! wizard_confirm "Ready to start?"; then
+        echo ""
+        gum style --faint "No worries! Run ./setup.sh again when you're ready."
+        exit 0
+    fi
+    echo ""
+    CURRENT_PHASE=0
+else
+    echo "Pre-flight: checking internet..."
+    if ! curl -s --connect-timeout 5 https://api.github.com >/dev/null 2>&1; then
+        warn "No internet connection detected. Some steps may fail."
+    fi
+fi
 
 # ─── Phase 1: Dependencies ─────────────────────────────────────────
 
 if [ "$SKIP_DEPS" = false ]; then
+    CURRENT_PHASE=$((CURRENT_PHASE + 1))
     step "Phase 1: Installing dependencies"
+    if [ "$WIZARD" = true ]; then
+        gum style --faint --italic "Installing build tools, Node.js, Python, and other prerequisites."
+        echo ""
+    fi
     source "$SCRIPT_DIR/scripts/install_deps.sh"
 else
     warn "Skipping dependency installation"
@@ -145,12 +388,22 @@ fi
 
 # ─── Phase 2: OpenClaw ─────────────────────────────────────────────
 
+CURRENT_PHASE=$((CURRENT_PHASE + 1))
 step "Phase 2: Installing OpenClaw"
+if [ "$WIZARD" = true ]; then
+    gum style --faint --italic "Installing the OpenClaw agent platform and initializing your workspace."
+    echo ""
+fi
 source "$SCRIPT_DIR/scripts/install_openclaw.sh"
 
 # ─── Phase 3: Workspace Files ──────────────────────────────────────
 
+CURRENT_PHASE=$((CURRENT_PHASE + 1))
 step "Phase 3: Setting up workspace"
+if [ "$WIZARD" = true ]; then
+    gum style --faint --italic "Creating config files and templates your agent needs to operate."
+    echo ""
+fi
 
 mkdir -p "$WORKSPACE"/{memory,scripts,references,transcriptions,slack_messages}
 
@@ -178,7 +431,12 @@ fi
 
 # ─── Phase 4: Sync Scripts ─────────────────────────────────────────
 
+CURRENT_PHASE=$((CURRENT_PHASE + 1))
 step "Phase 4: Installing sync scripts"
+if [ "$WIZARD" = true ]; then
+    gum style --faint --italic "Installing the Python scripts that sync your Slack, email, and calendar."
+    echo ""
+fi
 
 for f in "$SCRIPT_DIR"/sync-scripts/*.py; do
     fname=$(basename "$f")
@@ -192,13 +450,23 @@ log "Installed Python dependencies"
 
 # ─── Phase 5: Honcho ───────────────────────────────────────────────
 
+CURRENT_PHASE=$((CURRENT_PHASE + 1))
 step "Phase 5: Setting up Honcho (memory system)"
+if [ "$WIZARD" = true ]; then
+    gum style --faint --italic "Honcho is the AI's long-term memory. It remembers conversations and context."
+    echo ""
+fi
 source "$SCRIPT_DIR/scripts/setup_honcho.sh"
 
 # ─── Phase 6: Slack ────────────────────────────────────────────────
 
 if [ "$SKIP_SLACK" = false ]; then
+    CURRENT_PHASE=$((CURRENT_PHASE + 1))
     step "Phase 6: Setting up Slack"
+    if [ "$WIZARD" = true ]; then
+        gum style --faint --italic "Connecting to Slack so the agent can read messages and send you briefings."
+        echo ""
+    fi
     source "$SCRIPT_DIR/scripts/setup_slack.sh"
 else
     warn "Skipping Slack setup"
@@ -217,16 +485,27 @@ fi
 
 if [ "$KEYCHAIN_AVAILABLE" = true ]; then
     echo ""
-    echo "Your API keys and tokens can be stored in the system keychain"
-    echo "instead of plaintext files on disk."
-    if [ "$PLATFORM" = "macos" ]; then
-        echo "  Backend: macOS Keychain (via 'security' CLI)"
+    if [ "$WIZARD" = true ]; then
+        gum style --bold "Credential Storage"
+        echo ""
+        gum style "Your API keys and tokens can be stored in the system keychain"
+        gum style "instead of plaintext files on disk."
+        if [ "$PLATFORM" = "macos" ]; then
+            gum style --faint "Backend: macOS Keychain (via 'security' CLI)"
+        else
+            gum style --faint "Backend: GNOME Keyring / KDE Wallet (via 'secret-tool')"
+        fi
     else
-        echo "  Backend: GNOME Keyring / KDE Wallet (via 'secret-tool')"
+        echo "Your API keys and tokens can be stored in the system keychain"
+        echo "instead of plaintext files on disk."
+        if [ "$PLATFORM" = "macos" ]; then
+            echo "  Backend: macOS Keychain (via 'security' CLI)"
+        else
+            echo "  Backend: GNOME Keyring / KDE Wallet (via 'secret-tool')"
+        fi
     fi
     echo ""
-    ask "Store credentials in system keychain? (y/n, default y)"
-    if [ "$REPLY" != "n" ] && [ "$REPLY" != "N" ]; then
+    if wizard_confirm "Store credentials in system keychain?"; then
         USE_KEYCHAIN=true
         log "Keychain storage enabled"
     else
@@ -241,25 +520,47 @@ fi
 
 # ─── Phase 7: AI Provider + Google Cloud ─────────────────────────
 
+CURRENT_PHASE=$((CURRENT_PHASE + 1))
 step "Phase 7: AI provider setup"
+if [ "$WIZARD" = true ]; then
+    gum style --faint --italic "Choose which AI service powers your agent. Vertex AI is recommended."
+    gum style --faint --italic "You can always change this later in ~/.openclaw/openclaw.json."
+    echo ""
+fi
 
-echo "Which AI provider will you use?"
-echo ""
-echo "  1) Vertex AI   — Gemini + Claude via Google Cloud (recommended)"
-echo "  2) OpenAI      — GPT-4o-mini (fast) + GPT-4o (reasoning)"
-echo "  3) Anthropic   — Claude Haiku (fast) + Claude Sonnet (reasoning)"
-echo "  4) Ollama      — Local models, no API costs"
-echo "  5) AWS Bedrock — Claude via AWS"
-echo ""
-ask "Choose (1-5, default 1):"
+if [ "$WIZARD" = true ]; then
+    wizard_choose "Which AI provider will you use?" \
+        "Vertex AI — Gemini + Claude via Google Cloud (recommended)" \
+        "OpenAI — GPT-4o-mini (fast) + GPT-4o (reasoning)" \
+        "Anthropic — Claude Haiku (fast) + Claude Sonnet (reasoning)" \
+        "Ollama — Local models, no API costs" \
+        "AWS Bedrock — Claude via AWS"
+    case "$REPLY" in
+        OpenAI*)    AI_PROVIDER="openai"    ; FAST_MODEL="openai/gpt-4o-mini"                       ; REASONING_MODEL="openai/gpt-4o" ;;
+        Anthropic*) AI_PROVIDER="anthropic" ; FAST_MODEL="anthropic/claude-haiku-4-5-20251001"       ; REASONING_MODEL="anthropic/claude-sonnet-4-6" ;;
+        Ollama*)    AI_PROVIDER="ollama"    ; FAST_MODEL="ollama/llama3.1"                           ; REASONING_MODEL="ollama/llama3.1" ;;
+        *Bedrock*)  AI_PROVIDER="bedrock"   ; FAST_MODEL="bedrock/anthropic.claude-haiku-4-5-20251001" ; REASONING_MODEL="bedrock/anthropic.claude-sonnet-4-6" ;;
+        *)          AI_PROVIDER="vertex"    ; FAST_MODEL="vertex/gemini-2.5-flash"                   ; REASONING_MODEL="vertex/claude-sonnet-4-6" ;;
+    esac
+else
+    echo "Which AI provider will you use?"
+    echo ""
+    echo "  1) Vertex AI   — Gemini + Claude via Google Cloud (recommended)"
+    echo "  2) OpenAI      — GPT-4o-mini (fast) + GPT-4o (reasoning)"
+    echo "  3) Anthropic   — Claude Haiku (fast) + Claude Sonnet (reasoning)"
+    echo "  4) Ollama      — Local models, no API costs"
+    echo "  5) AWS Bedrock — Claude via AWS"
+    echo ""
+    ask "Choose (1-5, default 1):"
 
-case "${REPLY:-1}" in
-    2) AI_PROVIDER="openai"    ; FAST_MODEL="openai/gpt-4o-mini"                       ; REASONING_MODEL="openai/gpt-4o" ;;
-    3) AI_PROVIDER="anthropic" ; FAST_MODEL="anthropic/claude-haiku-4-5-20251001"       ; REASONING_MODEL="anthropic/claude-sonnet-4-6" ;;
-    4) AI_PROVIDER="ollama"    ; FAST_MODEL="ollama/llama3.1"                           ; REASONING_MODEL="ollama/llama3.1" ;;
-    5) AI_PROVIDER="bedrock"   ; FAST_MODEL="bedrock/anthropic.claude-haiku-4-5-20251001" ; REASONING_MODEL="bedrock/anthropic.claude-sonnet-4-6" ;;
-    *) AI_PROVIDER="vertex"    ; FAST_MODEL="vertex/gemini-2.5-flash"                   ; REASONING_MODEL="vertex/claude-sonnet-4-6" ;;
-esac
+    case "${REPLY:-1}" in
+        2) AI_PROVIDER="openai"    ; FAST_MODEL="openai/gpt-4o-mini"                       ; REASONING_MODEL="openai/gpt-4o" ;;
+        3) AI_PROVIDER="anthropic" ; FAST_MODEL="anthropic/claude-haiku-4-5-20251001"       ; REASONING_MODEL="anthropic/claude-sonnet-4-6" ;;
+        4) AI_PROVIDER="ollama"    ; FAST_MODEL="ollama/llama3.1"                           ; REASONING_MODEL="ollama/llama3.1" ;;
+        5) AI_PROVIDER="bedrock"   ; FAST_MODEL="bedrock/anthropic.claude-haiku-4-5-20251001" ; REASONING_MODEL="bedrock/anthropic.claude-sonnet-4-6" ;;
+        *) AI_PROVIDER="vertex"    ; FAST_MODEL="vertex/gemini-2.5-flash"                   ; REASONING_MODEL="vertex/claude-sonnet-4-6" ;;
+    esac
+fi
 
 log "Selected provider: $AI_PROVIDER"
 
@@ -550,7 +851,12 @@ fi
 # ─── Phase 8: Email & Calendar tools ─────────────────────────────
 
 if [ "$SKIP_GOOGLE" = false ]; then
+    CURRENT_PHASE=$((CURRENT_PHASE + 1))
     step "Phase 8: Setting up email & calendar tools"
+    if [ "$WIZARD" = true ]; then
+        gum style --faint --italic "Connecting to your email and calendar so the agent can read transcripts and events."
+        echo ""
+    fi
     source "$SCRIPT_DIR/scripts/setup_email.sh"
 else
     warn "Skipping email & calendar setup"
@@ -558,21 +864,31 @@ fi
 
 # ─── Phase 9: Obsidian ──────────────────────────────────────────────
 
+CURRENT_PHASE=$((CURRENT_PHASE + 1))
 step "Phase 9: Setting up Obsidian vault"
+if [ "$WIZARD" = true ]; then
+    gum style --faint --italic "Creating folders for people dossiers and client profiles in your Obsidian vault."
+    echo ""
+fi
 source "$SCRIPT_DIR/scripts/setup_obsidian.sh"
 
 # ─── Phase 10: Personalization ────────────────────────────────────────
 # (Runs BEFORE data sync so user.json exists when scripts need USER_NAME)
 
+CURRENT_PHASE=$((CURRENT_PHASE + 1))
 step "Phase 10: Personalization"
+if [ "$WIZARD" = true ]; then
+    gum style --faint --italic "Tell us about yourself so the agent knows who it's working for."
+    echo ""
+fi
 
 VENV_PYTHON="$HOME/.openclaw/venv/bin/python3"
 
 echo ""
-ask "What's your name? (e.g., Jane Doe)"
+wizard_input "What's your name? (e.g., Jane Doe)" "Jane Doe"
 USER_NAME="$REPLY"
 
-ask "What's your first name?"
+wizard_input "What's your first name?" "Jane"
 USER_FIRST="$REPLY"
 
 DETECTED_TZ=""
@@ -597,27 +913,25 @@ else
     USER_TZ="$REPLY"
 fi
 
-ask "What's your email? (for Google Workspace)"
+wizard_input "What's your email?" "jane@company.com"
 USER_EMAIL="$REPLY"
 
-ask "Your Slack user ID? (e.g., UXXXXXXXXXX, press Enter to skip)"
+wizard_input "Your Slack user ID? (e.g., UXXXXXXXXXX, press Enter to skip)" "UXXXXXXXXXX"
 USER_SLACK_ID="$REPLY"
 
-ask "Your title/role? (e.g., CTO, press Enter to skip)"
+wizard_input "Your title/role? (press Enter to skip)" "CTO"
 USER_TITLE="$REPLY"
 
-ask "Company name? (press Enter to skip)"
+wizard_input "Company name? (press Enter to skip)" "Acme Corp"
 USER_COMPANY="$REPLY"
 
-ask "Do you use GitHub for work? (y/n)"
 SYNC_GITHUB=false
-if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]; then
+if wizard_confirm "Do you use GitHub for work?"; then
     SYNC_GITHUB=true
 fi
 
-ask "Is your company services-based (agency, consulting, etc.)? (y/n)"
 SERVICES_BIZ=false
-if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]; then
+if wizard_confirm "Is your company services-based (agency, consulting)?"; then
     SERVICES_BIZ=true
 fi
 
@@ -670,62 +984,82 @@ log "Copied company profile template"
 
 # ─── Phase 11: Full Workspace Sync + Discovery ───────────────────────
 
+CURRENT_PHASE=$((CURRENT_PHASE + 1))
 step "Phase 11: Full workspace sync + discovery"
 
-echo "This will download your Slack, email, and calendar history,"
-echo "load it into Honcho, and use AI to identify your key people,"
-echo "clients, and priority channels."
-echo ""
-ask "Run full workspace sync now? This takes 5-10 minutes. (y/n)"
-if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]; then
+if [ "$WIZARD" = true ]; then
+    gum style --faint --italic "This downloads your communication history, loads it into memory,"
+    gum style --faint --italic "and uses AI to identify your key people, clients, and channels."
+    echo ""
+fi
+
+SYNC_NOW=false
+if wizard_confirm "Run full workspace sync now? (takes 5-10 minutes)"; then
+    SYNC_NOW=true
+fi
+
+if [ "$SYNC_NOW" = true ]; then
 
     # ── Step 1: Download all data ────────────────────────────────────
     step "Step 1/5: Downloading data"
+    if [ "$WIZARD" = true ]; then
+        gum style --faint --italic "Pulling 3 months of Slack, email transcripts, and 30 days of calendar events."
+        echo ""
+    fi
 
-    log "Refreshing calendar..."
-    vdirsyncer sync 2>/dev/null || warn "Calendar sync had errors (vdirsyncer may need 'discover' first)"
+    wizard_spin "Refreshing calendar" vdirsyncer sync 2>/dev/null || warn "Calendar sync had errors (vdirsyncer may need 'discover' first)"
 
-    log "Syncing Slack messages (3 months)..."
-    "$VENV_PYTHON" "$WORKSPACE/scripts/slack_sync.py" --hours 2160 --skip-threads || warn "Slack sync had errors"
+    wizard_spin "Syncing Slack messages (3 months)" "$VENV_PYTHON" "$WORKSPACE/scripts/slack_sync.py" --hours 2160 --skip-threads || warn "Slack sync had errors"
 
-    log "Downloading meeting transcripts..."
-    "$VENV_PYTHON" "$WORKSPACE/scripts/sync_meeting_transcripts.py" --full --skip-actions || warn "Transcript sync had errors"
+    wizard_spin "Downloading meeting transcripts" "$VENV_PYTHON" "$WORKSPACE/scripts/sync_meeting_transcripts.py" --full --skip-actions || warn "Transcript sync had errors"
 
-    log "Parsing calendar events (30 days)..."
-    "$VENV_PYTHON" "$WORKSPACE/scripts/sync_calendar.py" --days 30 || warn "Calendar parse had errors"
+    wizard_spin "Parsing calendar events (30 days)" "$VENV_PYTHON" "$WORKSPACE/scripts/sync_calendar.py" --days 30 || warn "Calendar parse had errors"
 
     if [ "$SYNC_GITHUB" = true ]; then
-        log "Syncing GitHub activity..."
-        "$VENV_PYTHON" "$WORKSPACE/scripts/sync_github.py" --days 90 || warn "GitHub sync had errors"
+        wizard_spin "Syncing GitHub activity" "$VENV_PYTHON" "$WORKSPACE/scripts/sync_github.py" --days 90 || warn "GitHub sync had errors"
     fi
 
     # ── Step 2: Filter and classify ──────────────────────────────────
     step "Step 2/5: Identifying bots and noise"
+    if [ "$WIZARD" = true ]; then
+        gum style --faint --italic "Auto-detecting bot accounts and noisy channels to filter out."
+        echo ""
+    fi
 
-    "$VENV_PYTHON" "$WORKSPACE/scripts/discover_workspace.py" --force || warn "Discovery had errors"
+    wizard_spin "Discovering workspace" "$VENV_PYTHON" "$WORKSPACE/scripts/discover_workspace.py" --force || warn "Discovery had errors"
 
     # ── Step 3: Load into Honcho ─────────────────────────────────────
     step "Step 3/5: Loading data into memory"
+    if [ "$WIZARD" = true ]; then
+        gum style --faint --italic "Pushing all downloaded data into the AI's long-term memory."
+        echo ""
+    fi
 
-    log "Loading Slack messages..."
-    "$VENV_PYTHON" "$WORKSPACE/scripts/honcho_slack_sync.py" || warn "Honcho Slack sync had errors"
+    wizard_spin "Loading Slack messages" "$VENV_PYTHON" "$WORKSPACE/scripts/honcho_slack_sync.py" || warn "Honcho Slack sync had errors"
 
-    log "Loading transcripts, calendar, and GitHub data..."
-    "$VENV_PYTHON" "$WORKSPACE/scripts/load_to_honcho.py" --all || warn "Honcho data load had errors"
+    wizard_spin "Loading transcripts, calendar, and GitHub data" "$VENV_PYTHON" "$WORKSPACE/scripts/load_to_honcho.py" --all || warn "Honcho data load had errors"
 
     # ── Step 4: LLM priority analysis ────────────────────────────────
-    step "Step 4/5: Analyzing priorities (Sonnet)"
+    step "Step 4/5: Analyzing priorities"
+    if [ "$WIZARD" = true ]; then
+        gum style --faint --italic "Using AI to determine who matters most, identify clients, and rank channels."
+        echo ""
+    fi
 
     ANALYZE_FLAGS=""
     if [ "$SERVICES_BIZ" = true ]; then
         ANALYZE_FLAGS="--services-business"
     fi
-    "$VENV_PYTHON" "$WORKSPACE/scripts/analyze_priorities.py" $ANALYZE_FLAGS || warn "Priority analysis had errors"
+    wizard_spin "Analyzing priorities" "$VENV_PYTHON" "$WORKSPACE/scripts/analyze_priorities.py" $ANALYZE_FLAGS || warn "Priority analysis had errors"
 
     # ── Step 5: Generate dossiers + client profiles ──────────────────
     step "Step 5/5: Generating dossiers"
+    if [ "$WIZARD" = true ]; then
+        gum style --faint --italic "Creating Obsidian profiles for every tracked person and client company."
+        echo ""
+    fi
 
-    "$VENV_PYTHON" "$WORKSPACE/scripts/generate_initial_dossiers.py" --type all --priority all || warn "Dossier generation had errors"
+    wizard_spin "Generating dossiers" "$VENV_PYTHON" "$WORKSPACE/scripts/generate_initial_dossiers.py" --type all --priority all || warn "Dossier generation had errors"
 
     log "Workspace sync complete!"
     log "Review your team config:    ~/.openclaw/workspace/team.json"
@@ -745,22 +1079,25 @@ fi
 
 # ─── Phase 12: Start ────────────────────────────────────────────────
 
+CURRENT_PHASE=$((CURRENT_PHASE + 1))
 step "Phase 12: Starting OpenClaw"
+if [ "$WIZARD" = true ]; then
+    gum style --faint --italic "Starting the agent gateway and scheduling recurring jobs."
+    echo ""
+fi
 
 if [ "$DRY_RUN" = true ]; then
     warn "Dry run, not starting gateway"
 else
     echo ""
-    ask "Start the OpenClaw gateway now? (y/n)"
-    if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]; then
-        openclaw gateway start
+    if wizard_confirm "Start the OpenClaw gateway now?"; then
+        wizard_spin "Starting gateway" openclaw gateway start
         sleep 3
         openclaw status
         log "Gateway is running"
 
         echo ""
-        ask "Create cron jobs now? (y/n)"
-        if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]; then
+        if wizard_confirm "Create cron jobs now?"; then
             source "$SCRIPT_DIR/scripts/setup_crons.sh"
         fi
     fi
@@ -768,13 +1105,41 @@ fi
 
 # ─── Done ────────────────────────────────────────────────────────────
 
+CURRENT_PHASE=$TOTAL_PHASES
 step "Setup Complete"
 
-echo "Next steps:"
-echo "  1. Edit ~/.openclaw/workspace/SOUL.md with your agent's personality"
-echo "  2. Edit ~/.openclaw/workspace/USER.md with your info"
-echo "  3. Add API keys to ~/.openclaw/workspace/TOOLS.md"
-echo "  4. Start the TUI: openclaw tui"
-echo "  5. Say hello!"
-echo ""
+if [ "$WIZARD" = true ]; then
+    echo ""
+    gum style --border rounded --border-foreground 2 --padding "1 3" --bold --align center \
+        "Your OpenClaw agent is ready!"
+    echo ""
+    gum style --bold "What your agent can do now:"
+    echo ""
+    gum style "  📅  Morning briefings at 8am with calendar, Slack highlights, and TODOs"
+    gum style "  👥  Auto-maintained dossiers on everyone you work with"
+    gum style "  📝  Action items extracted from every meeting transcript"
+    gum style "  💬  Slack scanning for things directed at you"
+    gum style "  🌙  End-of-day wrap with dossier updates and learnings"
+    echo ""
+    gum style --bold "Try these first:"
+    echo ""
+    gum style "  1. Open the TUI:  $(gum style --foreground 4 'openclaw tui')"
+    gum style "  2. Say:           $(gum style --foreground 4 'What is on my calendar today?')"
+    gum style "  3. Or ask:        $(gum style --foreground 4 'Give me a briefing on [person name]')"
+    echo ""
+    gum style --bold "Customize your agent:"
+    echo ""
+    gum style "  Personality:  ~/.openclaw/workspace/SOUL.md"
+    gum style "  Your context: ~/.openclaw/workspace/USER.md"
+    gum style "  Team config:  ~/.openclaw/workspace/team.json"
+    echo ""
+else
+    echo "Next steps:"
+    echo "  1. Edit ~/.openclaw/workspace/SOUL.md with your agent's personality"
+    echo "  2. Edit ~/.openclaw/workspace/USER.md with your info"
+    echo "  3. Add API keys to ~/.openclaw/workspace/TOOLS.md"
+    echo "  4. Start the TUI: openclaw tui"
+    echo "  5. Say hello!"
+    echo ""
+fi
 log "Done."
