@@ -4,99 +4,120 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-An install kit that bootstraps an OpenClaw-based personal AI agent ("Jeff") on a fresh Mac. The agent integrates Slack, Google Workspace (Gmail/Calendar/Drive), Obsidian, Honcho (memory), and Linear into an automated workflow with cron-driven sync cycles.
+A self-configuring setup kit for OpenClaw — an AI agent platform. The setup script authenticates the user, downloads their Slack/email/calendar/GitHub history, loads it into Honcho (memory), uses AI to identify key people and clients, and generates Obsidian dossiers. Then it sets up cron jobs to keep everything current.
 
 ## Running Setup
 
 ```bash
-./setup.sh                    # Full setup
+./setup.sh                    # Full setup (12 phases, interactive)
 ./setup.sh --skip-deps        # Skip Homebrew/Node/Python install
 ./setup.sh --skip-google      # Skip Google Workspace setup
 ./setup.sh --skip-slack       # Skip Slack setup
 ./setup.sh --dry-run          # Don't start gateway at end
 ```
 
-Setup is interactive (prompts for name, timezone, email). All scripts are sourced from `setup.sh`, not run as subprocesses — they share shell state.
-
-Python dependencies are installed into a venv at `~/.openclaw/venv`. Cron jobs use `~/.openclaw/venv/bin/python3`.
+Python dependencies install into `~/.openclaw/venv`. Cron jobs use `~/.openclaw/venv/bin/python3`.
 
 ## Architecture
 
-### Data Flow
+### Setup Pipeline (Phase 11)
 
 ```
-External Sources          Local Cache              Memory            Outputs
-─────────────────    ──────────────────    ──────────────    ─────────────────
-Slack messages    →  JSONL per channel  →  Honcho sessions →  Dossier updates
-Gmail/transcripts →  local .md files    →  Honcho peers    →  Morning briefings
-Google Calendar   →  vdirsyncer/khal    →                  →  Meeting prep
-Linear tickets    →  task_orchestrator  →                  →  Claude Code tasks
-```
+Step 1: Download
+  Slack API (3mo)    → slack_messages/*.jsonl
+  Gmail (gogcli)     → transcriptions/*.txt
+  vdirsyncer (.ics)  → calendar_events.json + calendar_attendees.json
+  gh CLI (optional)  → github_activity.json
 
-Honcho is the central memory layer. All external data flows through local caching (for dedup/state tracking) before being pushed to Honcho, where it's available for cross-session reasoning.
+Step 2: Filter
+  discover_workspace.py → discovered_bots.json + discovered_channels.json + discovered_people.json
+
+Step 3: Load into Honcho
+  honcho_slack_sync.py → Honcho sessions (slack-*)
+  load_to_honcho.py    → Honcho sessions (transcript-*, calendar-events, github-*)
+
+Step 4: LLM Priority Analysis (Sonnet)
+  analyze_priorities.py → team.json (tracked_people, clients, priorities)
+
+Step 5: Generate Dossiers (Flash)
+  generate_initial_dossiers.py → Obsidian Vault/People/*.md + Clients/*.md
+```
 
 ### Directory Layout
 
-- **`setup.sh`** — Orchestrator. Runs phases 1-10 sequentially, sourcing scripts from `scripts/`.
-- **`scripts/`** — One-time setup scripts (install deps, configure integrations). Each is idempotent.
-- **`sync-scripts/`** — Python scripts that run on cron via OpenClaw. Copied to `~/.openclaw/workspace/scripts/` at install time.
-- **`workspace/`** — Agent identity/config files. Copied to `~/.openclaw/workspace/` (won't overwrite existing).
-- **`templates/`** — `openclaw.json` (agent config) and `dossier-template.md` (people profiles).
+- **`setup.sh`** — Orchestrator. 12 phases, sources scripts from `scripts/`.
+- **`scripts/`** — One-time setup scripts. Each is idempotent.
+- **`sync-scripts/`** — Python scripts for cron + setup. Copied to `~/.openclaw/workspace/scripts/`.
+- **`workspace/`** — Agent identity markdown files. Copied to `~/.openclaw/workspace/`.
+- **`templates/`** — Config templates: `openclaw.json`, `user.json`, `team.json`, dossier/company templates, `client_secret.json` (gitignored).
 
-### Shared Modules (`sync-scripts/`)
+### Shared Modules
 
-- **`shared.py`** — Path constants (`WORKSPACE`, `MESSAGES_DIR`, `VAULT_PATH`, `PEOPLE_DIR`), Honcho connection (`get_honcho()`), atomic JSON/text writes (`save_json`, `atomic_write_text`), ID sanitization (`sanitize_id`), and cron overlap prevention (`script_lock`). All sync scripts import from here.
-- **`config.py`** — Consolidated configuration: `BOT_UIDS`, `BOT_PATTERNS`, `EXCLUDE_CHANNELS`, `TRACKED_PEOPLE`, `DEEP_RECONCILE_PEERS`, `PRIORITY_DM_USERS`, `PRIORITY_CHANNELS`. When the team or channel list changes, update here only.
+- **`shared.py`** — Path constants, user identity (from `user.json`), Honcho client (`get_honcho()`), atomic writes (`save_json`), ID sanitization (`sanitize_id`), cron overlap prevention (`script_lock`). All scripts import from here.
+- **`config.py`** — Loads auto-discovered config from workspace JSON files: `BOT_UIDS`, `EXCLUDE_CHANNELS` (from discovery), `TRACKED_PEOPLE`, `CLIENTS`, `PRIORITY_*` (from team.json).
 
-### Sync Scripts (Python)
-
-Each script has a single responsibility and tracks its own sync state to avoid reprocessing:
+### Sync Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `slack_sync.py` | Fetch Slack messages → JSONL per channel (14-day retention) |
-| `slack_todo_scan.py` | Scan recent Slack for action items directed at user |
-| `honcho_slack_sync.py` | Push local Slack JSONL → Honcho sessions (batch 100) |
-| `honcho_obsidian_sync.py` | Bidirectional sync: Obsidian dossiers ↔ Honcho peers |
-| `honcho_write.py` | CLI to push facts/conclusions into Honcho directly |
-| `update_dossiers.py` | Gather Honcho context per person for agent LLM merge |
-| `sync_meeting_transcripts.py` | Gmail → local transcripts + extract action items → TODO.md + Obsidian |
-| `morning_briefing.py` | Generate daily briefing from calendar + PRs + Linear + Slack |
-| `task_orchestrator.py` | Linear ticket → Claude Code launch commands |
+| `slack_sync.py` | Fetch Slack messages → JSONL per channel |
+| `slack_todo_scan.py` | Scan Slack for action items directed at user |
+| `honcho_slack_sync.py` | Push Slack JSONL → Honcho sessions |
+| `honcho_obsidian_sync.py` | Bidirectional Obsidian ↔ Honcho sync |
+| `honcho_write.py` | CLI to push facts/conclusions into Honcho |
+| `sync_meeting_transcripts.py` | Gmail → transcripts + action item extraction |
+| `sync_calendar.py` | Parse vdirsyncer .ics → calendar events + attendee frequency |
+| `sync_github.py` | GitHub PRs/issues via `gh` CLI (optional) |
+| `load_to_honcho.py` | Push transcripts + calendar + GitHub → Honcho |
+| `discover_workspace.py` | Auto-detect bots, noise channels, score people |
+| `analyze_priorities.py` | Sonnet-based priority ranking after data load |
+| `generate_initial_dossiers.py` | Bulk dossier + client profile generation via Flash |
+| `update_dossiers.py` | Incremental dossier updates from Honcho |
+| `morning_briefing.py` | Daily briefing from calendar + PRs + Slack |
+| `task_orchestrator.py` | Linear/GitHub ticket → Claude Code tasks |
 
-### Cron Schedule (registered via `scripts/setup_crons.sh`)
+### Cron Schedule
 
 | Job | Frequency | Model | What it does |
 |-----|-----------|-------|-------------|
-| slack-cycle | 15 min | Gemini Flash | slack_sync + todo scan + honcho push |
-| background-sync | 1 hour | Gemini Flash | gcal + Obsidian/Honcho dossier sync |
-| linear-pr-cycle | 30 min | Gemini Flash | Check PRs + urgent Linear tickets (conditional) |
+| slack-cycle | 15 min | Gemini Flash | Slack sync + todo scan + Honcho push |
+| background-sync | 1 hour | Gemini Flash | Calendar + Obsidian/Honcho dossier sync |
+| linear-pr-cycle | 30 min | Gemini Flash | PRs + Linear tickets (conditional on `LINEAR_API_KEY`) |
 | morning-setup | 8am weekdays | Gemini Flash | Daily note + briefing + Slack DM |
 | eod | 5pm weekdays | Claude Sonnet | Transcripts + dossier merge + EOD summary |
 
-All models accessed via **Vertex AI** (GCP project `YOUR_PROJECT_ID`). Claude Sonnet is only used for the EOD job (dossier merging requires quality writing). Everything else uses Gemini 2.5 Flash (~$0.15/M input) to keep costs under $5/month.
+Models accessed via Vertex AI. Sonnet only for the daily EOD job. Everything else uses Gemini Flash (~$5/month total).
+
+## Config Files (all auto-generated, editable post-setup)
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `user.json` | `~/.openclaw/workspace/` | User identity (name, email, Slack ID, timezone) |
+| `team.json` | `~/.openclaw/workspace/` | Tracked people, clients, priority channels (LLM-generated) |
+| `discovered_bots.json` | `~/.openclaw/workspace/` | Auto-detected bot UIDs + display name patterns |
+| `discovered_channels.json` | `~/.openclaw/workspace/` | Auto-detected noise channels to exclude |
+| `discovered_people.json` | `~/.openclaw/workspace/` | Heuristic people scores (input to analyze_priorities) |
+| `openclaw.json` | `~/.openclaw/` | Vertex AI auth profile + model config |
 
 ## Key Dependencies
 
-- **OpenClaw** — Agent platform (installed via npm globally)
-- **Google Cloud SDK** — `gcloud auth application-default login` for Vertex AI auth
-- **Honcho** — Memory system (cloud or self-hosted Postgres + Ollama with nomic-embed-text)
-- **Python packages** — See `requirements.txt`. Installed into `~/.openclaw/venv`.
-- **gogcli** — Google OAuth CLI for Gmail/Calendar
-- **vdirsyncer** + **khal** — CalDAV sync and local calendar
-- **gh** — GitHub CLI (for PR checks and code checkin)
-- **Linear API** — Ticket management (via task_orchestrator)
+- **OpenClaw** — Agent platform (npm)
+- **Google Cloud SDK** — Vertex AI auth (`gcloud auth application-default login`)
+- **Honcho** — Memory system (cloud or self-hosted)
+- **Python packages** — See `requirements.txt` (installed into venv)
+- **gogcli** — Google OAuth CLI for Gmail
+- **vdirsyncer + khal** — CalDAV calendar sync
+- **gh** — GitHub CLI (optional)
+- **icalendar** — Python library for .ics calendar parsing
 
 ## Conventions
 
-- All setup scripts use `set -e` and are idempotent (check before installing).
-- Sync scripts use `shared.script_lock()` (flock-based) to prevent concurrent cron runs.
-- State files are written atomically via `shared.save_json()` (temp file + `os.replace`).
-- Sync scripts track state in per-script JSON files to avoid duplicate processing.
-- Slack messages cached as JSONL at `~/.openclaw/workspace/slack_messages/<channel>.jsonl`.
-- Credentials live in `.slack_env` / `.google_env` (gitignored) and `~/.openclaw/workspace/TOOLS.md`.
-- Agent identity is defined by workspace markdown files (SOUL.md, USER.md, IDENTITY.md) loaded every session.
-- The `sed -i ''` pattern in setup.sh is macOS-specific (no backup extension).
+- Setup scripts use `set -e` and are idempotent.
+- Sync scripts use `script_lock()` (flock) to prevent cron overlap.
+- State files written atomically via `save_json()` (temp + `os.replace`).
+- No hardcoded names, IDs, or company data — everything from `user.json` + `team.json`.
+- All config auto-discovered during setup, editable afterward.
+- `sed -i ''` in setup.sh is macOS-specific (Linux support tracked in issue #1).
 
 ## Environment Variables
 
@@ -105,11 +126,6 @@ All models accessed via **Vertex AI** (GCP project `YOUR_PROJECT_ID`). Claude So
 | `OBSIDIAN_VAULT` | `~/Documents/Obsidian Vault` | shared.py, setup_obsidian.sh |
 | `HONCHO_BASE_URL` | `http://localhost:18790` | shared.py |
 | `HONCHO_WORKSPACE` | `openclaw` | shared.py |
-| `GOG_ACCOUNT` | (required) | sync_meeting_transcripts.py |
+| `GOG_ACCOUNT` | (required for email sync) | sync_meeting_transcripts.py |
 | `SLACK_USER_TOKEN` | — | slack_sync.py |
-| `SLACK_USER_ID` | — | morning_briefing.py |
 | `LINEAR_API_KEY` | — | morning_briefing.py, task_orchestrator.py |
-
-## Target Runtime Environment
-
-macOS 14+, Homebrew, Node.js 22, Python 3.12. The setup scripts and `sed` flags are Mac-specific — adapting to Linux requires changing `sed -i ''` to `sed -i` and replacing Homebrew with apt/dnf equivalents.
