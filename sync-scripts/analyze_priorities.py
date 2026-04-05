@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-analyze_priorities.py — Use Claude Sonnet via Vertex AI to analyze workspace
-data and determine priority rankings for team.json.
+analyze_priorities.py — Use an LLM (configured "reasoning" model) to analyze
+workspace data and determine priority rankings for team.json.
 
 Gathers data from:
   - discovered_bots.json (to exclude)
@@ -10,8 +10,9 @@ Gathers data from:
   - github_activity.json (collaboration data, if exists)
   - Channel metadata from _channels.json
 
-Calls Claude Sonnet to classify people, identify clients, and rank priorities.
-Merges results into team.json (preserving manual fields like repo_map).
+Calls the configured reasoning model to classify people, identify clients,
+and rank priorities. Merges results into team.json (preserving manual fields
+like repo_map).
 
 Usage:
   python3 analyze_priorities.py                     # Run analysis
@@ -22,17 +23,16 @@ Usage:
 import argparse
 import json
 import re
-import subprocess
 import sys
 from collections import Counter
 from datetime import datetime, timezone
-from pathlib import Path
 
 from shared import (
     WORKSPACE,
     MESSAGES_DIR,
     load_json,
     save_json,
+    call_llm,
     USER_NAME,
     USER_TITLE,
     USER_COMPANY,
@@ -47,64 +47,8 @@ CHANNELS_META_FILE = MESSAGES_DIR / "_channels.json"
 ATTENDEES_FILE = WORKSPACE / "calendar_attendees.json"
 GITHUB_FILE = WORKSPACE / "github_activity.json"
 TEAM_FILE = WORKSPACE / "team.json"
-OPENCLAW_CONFIG = Path.home() / ".openclaw" / "openclaw.json"
 
 
-# ── Vertex AI Sonnet call ──────────────────────────────────────────────────
-
-
-def call_sonnet(prompt: str, max_tokens: int = 4096) -> str:
-    """Call Claude Sonnet via Vertex AI REST API."""
-    config = load_json(OPENCLAW_CONFIG)
-    vertex_profile = config.get("auth", {}).get("profiles", {}).get("vertex:default", {})
-    project = vertex_profile.get("project_id", "")
-    region = vertex_profile.get("region", "")
-
-    if not project or not region:
-        print("ERROR: Vertex AI project_id or region not configured in openclaw.json", file=sys.stderr)
-        print("  Expected path: auth.profiles['vertex:default'].{project_id, region}", file=sys.stderr)
-        sys.exit(1)
-
-    result = subprocess.run(
-        ["gcloud", "auth", "application-default", "print-access-token"],
-        capture_output=True, text=True,
-    )
-    token = result.stdout.strip()
-    if not token:
-        print("ERROR: Could not get gcloud access token.", file=sys.stderr)
-        print("  Run: gcloud auth application-default login", file=sys.stderr)
-        sys.exit(1)
-
-    url = (
-        f"https://{region}-aiplatform.googleapis.com/v1/projects/{project}"
-        f"/locations/{region}/publishers/anthropic/models/claude-sonnet-4-6:rawPredict"
-    )
-
-    import urllib.request
-    import urllib.error
-
-    body = json.dumps({
-        "anthropic_version": "vertex-2023-10-16",
-        "max_tokens": max_tokens,
-        "messages": [{"role": "user", "content": prompt}],
-    }).encode()
-
-    req = urllib.request.Request(url, data=body, headers={
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    })
-
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            result = json.loads(resp.read())
-        return result["content"][0]["text"]
-    except urllib.error.HTTPError as e:
-        body_text = e.read().decode("utf-8", errors="replace")
-        print(f"ERROR: Vertex AI returned HTTP {e.code}: {body_text[:500]}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        print(f"ERROR: Vertex AI call failed: {e}", file=sys.stderr)
-        sys.exit(1)
 
 
 # ── Data gathering ─────────────────────────────────────────────────────────
@@ -521,7 +465,7 @@ def merge_into_team(existing: dict, analysis: dict) -> dict:
 
     # -- metadata --
     merged["analyzed_at"] = datetime.now(timezone.utc).isoformat()
-    merged["analyzed_by"] = "analyze_priorities.py (Claude Sonnet via Vertex AI)"
+    merged["analyzed_by"] = "analyze_priorities.py"
 
     return merged
 
@@ -583,7 +527,7 @@ def main():
     # ── 3. Call Sonnet ─────────────────────────────────────────────────
 
     if args.dry_run:
-        print("\n  [DRY RUN] Would send prompt to Claude Sonnet via Vertex AI.")
+        print("\n  [DRY RUN] Would send prompt to configured reasoning model.")
         print("\n  Data summary:")
         if slack_people:
             print("    Top 5 Slack contacts:")
@@ -613,8 +557,8 @@ def main():
         print("\n  [DRY RUN] No files written.")
         return
 
-    print("\n  Calling Claude Sonnet via Vertex AI...")
-    response_text = call_sonnet(prompt, max_tokens=4096)
+    print("\n  Calling reasoning model...")
+    response_text = call_llm(prompt, role="reasoning", max_tokens=4096)
     print(f"  Response received ({len(response_text):,} characters)")
 
     # ── 4. Parse response ──────────────────────────────────────────────

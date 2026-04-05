@@ -36,10 +36,10 @@ Step 3: Load into Honcho
   honcho_slack_sync.py → Honcho sessions (slack-*)
   load_to_honcho.py    → Honcho sessions (transcript-*, calendar-events, github-*)
 
-Step 4: LLM Priority Analysis (Sonnet)
+Step 4: LLM Priority Analysis (reasoning model)
   analyze_priorities.py → team.json (tracked_people, clients, priorities)
 
-Step 5: Generate Dossiers (Flash)
+Step 5: Generate Dossiers (fast model)
   generate_initial_dossiers.py → Obsidian Vault/People/*.md + Clients/*.md
 ```
 
@@ -53,7 +53,7 @@ Step 5: Generate Dossiers (Flash)
 
 ### Shared Modules
 
-- **`shared.py`** — Path constants, user identity (from `user.json`), Honcho client (`get_honcho()`), atomic writes (`save_json`), ID sanitization (`sanitize_id`), cron overlap prevention (`script_lock`). All scripts import from here.
+- **`shared.py`** — Path constants, user identity (from `user.json`), `call_llm()` (multi-provider LLM dispatch), Honcho client (`get_honcho()`), atomic writes (`save_json`), ID sanitization (`sanitize_id`), cron overlap prevention (`script_lock`). All scripts import from here.
 - **`config.py`** — Loads auto-discovered config from workspace JSON files: `BOT_UIDS`, `EXCLUDE_CHANNELS` (from discovery), `TRACKED_PEOPLE`, `CLIENTS`, `PRIORITY_*` (from team.json).
 
 ### Sync Scripts
@@ -70,23 +70,23 @@ Step 5: Generate Dossiers (Flash)
 | `sync_github.py` | GitHub PRs/issues via `gh` CLI (optional) |
 | `load_to_honcho.py` | Push transcripts + calendar + GitHub → Honcho |
 | `discover_workspace.py` | Auto-detect bots, noise channels, score people |
-| `analyze_priorities.py` | Sonnet-based priority ranking after data load |
-| `generate_initial_dossiers.py` | Bulk dossier + client profile generation via Flash |
+| `analyze_priorities.py` | LLM-based priority ranking (reasoning model) |
+| `generate_initial_dossiers.py` | Bulk dossier + client profile generation (fast model) |
 | `update_dossiers.py` | Incremental dossier updates from Honcho |
 | `morning_briefing.py` | Daily briefing from calendar + PRs + Slack |
 | `task_orchestrator.py` | Linear/GitHub ticket → Claude Code tasks |
 
 ### Cron Schedule
 
-| Job | Frequency | Model | What it does |
-|-----|-----------|-------|-------------|
-| slack-cycle | 15 min | Gemini Flash | Slack sync + todo scan + Honcho push |
-| background-sync | 1 hour | Gemini Flash | Calendar + Obsidian/Honcho dossier sync |
-| linear-pr-cycle | 30 min | Gemini Flash | PRs + Linear tickets (conditional on `LINEAR_API_KEY`) |
-| morning-setup | 8am weekdays | Gemini Flash | Daily note + briefing + Slack DM |
-| eod | 5pm weekdays | Claude Sonnet | Transcripts + dossier merge + EOD summary |
+| Job | Frequency | Model Role | What it does |
+|-----|-----------|------------|-------------|
+| slack-cycle | 15 min | fast | Slack sync + todo scan + Honcho push |
+| background-sync | 1 hour | fast | Calendar + Obsidian/Honcho dossier sync |
+| linear-pr-cycle | 30 min | fast | PRs + Linear tickets (conditional on `LINEAR_API_KEY`) |
+| morning-setup | 8am weekdays | fast | Daily note + briefing + Slack DM |
+| eod | 5pm weekdays | reasoning | Transcripts + dossier merge + EOD summary |
 
-Models accessed via Vertex AI. Sonnet only for the daily EOD job. Everything else uses Gemini Flash (~$5/month total).
+Model roles (`fast`, `reasoning`) are mapped to specific provider/model in `openclaw.json`. Default: Vertex AI (Gemini Flash + Claude Sonnet). Supported: OpenAI, Anthropic, Ollama, AWS Bedrock.
 
 ## Config Files (all auto-generated, editable post-setup)
 
@@ -97,12 +97,12 @@ Models accessed via Vertex AI. Sonnet only for the daily EOD job. Everything els
 | `discovered_bots.json` | `~/.openclaw/workspace/` | Auto-detected bot UIDs + display name patterns |
 | `discovered_channels.json` | `~/.openclaw/workspace/` | Auto-detected noise channels to exclude |
 | `discovered_people.json` | `~/.openclaw/workspace/` | Heuristic people scores (input to analyze_priorities) |
-| `openclaw.json` | `~/.openclaw/` | Vertex AI auth profile + model config |
+| `openclaw.json` | `~/.openclaw/` | AI provider auth profile + model role mapping |
 
 ## Key Dependencies
 
 - **OpenClaw** — Agent platform (npm)
-- **Google Cloud SDK** — Vertex AI auth (`gcloud auth application-default login`)
+- **Google Cloud SDK** — Required for Vertex AI provider (`gcloud auth application-default login`)
 - **Honcho** — Memory system (cloud or self-hosted)
 - **Python packages** — See `requirements.txt` (installed into venv)
 - **gogcli** — Google OAuth CLI for Gmail (only if using Google email provider)
@@ -116,6 +116,7 @@ Models accessed via Vertex AI. Sonnet only for the daily EOD job. Everything els
 - Sync scripts use `script_lock()` (flock) to prevent cron overlap.
 - State files written atomically via `save_json()` (temp + `os.replace`).
 - No hardcoded names, IDs, or company data — everything from `user.json` + `team.json`.
+- No hardcoded model names — scripts use `call_llm(prompt, role="fast"|"reasoning")` which reads from `openclaw.json`.
 - All config auto-discovered during setup, editable afterward.
 - `sedi()` wrapper in setup.sh handles cross-platform `sed -i` (macOS needs `''` arg, Linux doesn't).
 
@@ -129,4 +130,6 @@ Models accessed via Vertex AI. Sonnet only for the daily EOD job. Everything els
 | `GOG_ACCOUNT` | (required for Google email) | sync_meeting_transcripts.py |
 | `IMAP_PASSWORD` | — | sync_meeting_transcripts.py (if using IMAP provider) |
 | `SLACK_USER_TOKEN` | — | slack_sync.py |
+| `OPENAI_API_KEY` | — | shared.py (if using OpenAI provider) |
+| `ANTHROPIC_API_KEY` | — | shared.py (if using Anthropic provider) |
 | `LINEAR_API_KEY` | — | morning_briefing.py, task_orchestrator.py |

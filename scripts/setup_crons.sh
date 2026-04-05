@@ -4,14 +4,16 @@
 
 PYTHON="$HOME/.openclaw/venv/bin/python3"
 SCRIPTS="$HOME/.openclaw/workspace/scripts"
+FAST_MODEL=$(jq -r '.models.fast' "$HOME/.openclaw/openclaw.json")
+REASONING_MODEL=$(jq -r '.models.reasoning' "$HOME/.openclaw/openclaw.json")
 
-echo "Creating cron jobs..."
+echo "Creating cron jobs... (fast=$FAST_MODEL, reasoning=$REASONING_MODEL)"
 
 # Slack sync (every 15 min — uses Haiku since it just runs scripts and checks output)
 openclaw cron add \
     --name "slack-cycle" \
     --every 900000 \
-    --model "vertex/gemini-2.5-flash" \
+    --model "$FAST_MODEL" \
     --message "Run all three Slack scripts in order:
 1. \`$PYTHON $SCRIPTS/slack_sync.py\`
 2. \`$PYTHON $SCRIPTS/slack_todo_scan.py\`
@@ -24,7 +26,7 @@ Report only if you added a TODO item or hit an error." \
 openclaw cron add \
     --name "background-sync" \
     --every 3600000 \
-    --model "vertex/gemini-2.5-flash" \
+    --model "$FAST_MODEL" \
     --message "Run these background syncs in order:
 1. \`vdirsyncer sync 2>/dev/null\` (Google Calendar)
 2. \`$PYTHON $SCRIPTS/honcho_obsidian_sync.py --update-dossiers\`
@@ -37,7 +39,7 @@ if [ -n "${LINEAR_API_KEY:-}" ]; then
     openclaw cron add \
         --name "linear-pr-cycle" \
         --every 1800000 \
-        --model "vertex/gemini-2.5-flash" \
+        --model "$FAST_MODEL" \
         --message "Run: \`$PYTHON $SCRIPTS/task_orchestrator.py check-reviews\`
 Report only on new review comments, CI failures, or new Urgent Linear tickets." \
         --timeout 180 \
@@ -51,7 +53,7 @@ openclaw cron add \
     --name "morning-setup" \
     --cron "0 8 * * 1-5" \
     --tz "America/Denver" \
-    --model "vertex/gemini-2.5-flash" \
+    --model "$FAST_MODEL" \
     --message "Morning setup: 1) Create today's Obsidian daily note with meetings + top TODOs. 2) Run morning_briefing.py and DM the output to user on Slack." \
     --timeout 180 \
     --delivery none 2>/dev/null && log "Created morning-setup" || warn "morning-setup may already exist"
@@ -61,7 +63,7 @@ openclaw cron add \
     --name "eod" \
     --cron "0 17 * * 1-5" \
     --tz "America/Denver" \
-    --model "vertex/claude-sonnet-4-6" \
+    --model "$REASONING_MODEL" \
     --message "End-of-day wrap. Run these steps in order:
 
 ## Step 1: Meeting transcripts

@@ -15,11 +15,8 @@ Usage:
 """
 
 import argparse
-import json
-import subprocess
 import sys
 import time
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -29,63 +26,18 @@ from shared import (
     CLIENTS_DIR,
     get_honcho,
     load_json,
+    call_llm,
     sanitize_id,
     USER_NAME,
     USER_TITLE,
 )
 
-# ── Vertex AI / Gemini Flash ─────────────────────────────────────────────────
+# ── Config ───────────────────────────────────────────────────────────────────
 
 DOSSIER_TEMPLATE_PATH = Path.home() / ".openclaw" / "workspace" / "references" / "dossier-template.md"
 TEAM_JSON_PATH = WORKSPACE / "team.json"
-OPENCLAW_CONFIG_PATH = Path.home() / ".openclaw" / "openclaw.json"
 
 RATE_LIMIT_SECONDS = 0.5
-
-
-def call_flash(prompt: str, max_tokens: int = 4096) -> str:
-    """Call Gemini Flash via Vertex AI REST API."""
-    config = load_json(OPENCLAW_CONFIG_PATH)
-    vertex_profile = config.get("auth", {}).get("profiles", {}).get("vertex:default", {})
-    project = vertex_profile.get("project_id", "")
-    region = vertex_profile.get("region", "")
-
-    if not project or not region:
-        print("  ERROR: Vertex AI project/region not configured in openclaw.json", file=sys.stderr)
-        return ""
-
-    result = subprocess.run(
-        ["gcloud", "auth", "application-default", "print-access-token"],
-        capture_output=True,
-        text=True,
-    )
-    token = result.stdout.strip()
-    if not token:
-        print("  ERROR: Could not get gcloud access token", file=sys.stderr)
-        return ""
-
-    url = (
-        f"https://{region}-aiplatform.googleapis.com/v1/projects/{project}"
-        f"/locations/{region}/publishers/google/models/gemini-2.5-flash:generateContent"
-    )
-
-    body = json.dumps({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": max_tokens},
-    }).encode()
-
-    req = urllib.request.Request(url, data=body, headers={
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    })
-
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read())
-        return result["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception as e:
-        print(f"  ERROR: Flash API call failed: {e}", file=sys.stderr)
-        return ""
 
 
 # ── Honcho queries ────────────────────────────────────────────────────────────
@@ -339,11 +291,11 @@ def main():
                 continue
 
             prompt = build_person_prompt(person_name, info, context, template, company=company)
-            print(f"  calling Flash for {person_name}...")
-            content = call_flash(prompt)
+            print(f"  calling fast model for {person_name}...")
+            content = call_llm(prompt, role="fast")
 
             if not content:
-                print(f"  warn: Flash returned empty for {person_name}", file=sys.stderr)
+                print(f"  warn: LLM returned empty for {person_name}", file=sys.stderr)
                 stats["errors"] += 1
                 continue
 
@@ -376,11 +328,11 @@ def main():
                 continue
 
             prompt = build_company_prompt(company_name, company_info, context)
-            print(f"  calling Flash for {company_name}...")
-            content = call_flash(prompt)
+            print(f"  calling fast model for {company_name}...")
+            content = call_llm(prompt, role="fast")
 
             if not content:
-                print(f"  warn: Flash returned empty for {company_name}", file=sys.stderr)
+                print(f"  warn: LLM returned empty for {company_name}", file=sys.stderr)
                 stats["errors"] += 1
                 continue
 
