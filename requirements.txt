@@ -13,5 +13,5 @@ vdirsyncer>=0.19.0,<1.0
 khal>=0.11.0,<1.0
 
 # Calendar event parsing (sync_calendar.py)
-icalendar>=6.0.0,<7.0
+icalendar>=6.0.0,<8.0
 python-dateutil>=2.9.0
