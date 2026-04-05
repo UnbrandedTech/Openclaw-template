@@ -618,6 +618,16 @@ if [ "$AI_PROVIDER" = "vertex" ]; then
     GCP_PROJECT=$(jq -r '.auth.profiles["vertex:default"].project_id' "$SCRIPT_DIR/templates/openclaw.json")
     GCP_REGION=$(jq -r '.auth.profiles["vertex:default"].region' "$SCRIPT_DIR/templates/openclaw.json")
 
+    # Prompt if template still has placeholders
+    if [ -z "$GCP_PROJECT" ] || [ "$GCP_PROJECT" = "YOUR_PROJECT_ID" ] || [ "$GCP_PROJECT" = "null" ]; then
+        wizard_input "Google Cloud project ID (e.g., my-company-prod):" "my-project-id"
+        GCP_PROJECT="$REPLY"
+    fi
+    if [ -z "$GCP_REGION" ] || [ "$GCP_REGION" = "null" ]; then
+        wizard_input "GCP region for Vertex AI (default: us-east5):" "us-east5"
+        GCP_REGION="${REPLY:-us-east5}"
+    fi
+
     ALL_SCOPES="https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/calendar.readonly,https://www.googleapis.com/auth/drive.readonly"
 
     # 1. Check gcloud is installed
@@ -832,8 +842,10 @@ if [ ! -f "$OPENCLAW_DIR/openclaw.json" ]; then
     mkdir -p "$OPENCLAW_DIR"
 
     if [ "$AI_PROVIDER" = "vertex" ]; then
-        # Vertex: use template (has project/region)
+        # Vertex: use template and inject actual project/region
         cp "$SCRIPT_DIR/templates/openclaw.json" "$OPENCLAW_DIR/openclaw.json"
+        sedi "s/YOUR_PROJECT_ID/$GCP_PROJECT/g" "$OPENCLAW_DIR/openclaw.json"
+        sedi "s/us-east5/$GCP_REGION/g" "$OPENCLAW_DIR/openclaw.json"
         log "Created openclaw.json (Vertex AI, project: $GCP_PROJECT, region: $GCP_REGION)"
     else
         # Non-Vertex: generate config with selected provider
