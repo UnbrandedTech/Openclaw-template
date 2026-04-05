@@ -31,7 +31,7 @@ from shared import (
     get_honcho, load_json, save_json, sanitize_id, script_lock,
     USER_NAME, USER_PEER_ID,
 )
-from config import BOT_UIDS, BOT_PATTERNS, DEEP_RECONCILE_PEERS
+from config import BOT_UIDS, DEEP_RECONCILE_PEERS
 
 SYNC_STATE_FILE = MESSAGES_DIR / ".honcho_obsidian_state.json"
 
@@ -121,7 +121,7 @@ def extract_peer_card(content: str, person_name: str) -> list[str]:
 
     # Relationship section -> single summary fact
     if "Relationship" in sections:
-        rel_text = " ".join(l.strip() for l in sections["Relationship"] if l.strip())
+        rel_text = " ".join(line.strip() for line in sections["Relationship"] if line.strip())
         if rel_text:
             # Take first 200 chars as relationship summary
             facts.append(f"Relationship: {rel_text[:200]}")
@@ -148,7 +148,7 @@ def extract_peer_card(content: str, person_name: str) -> list[str]:
     # Pattern sections -> first sentence as fact
     for section_name, section_lines in sections.items():
         if section_name.startswith("Pattern:"):
-            text = " ".join(l.strip() for l in section_lines if l.strip())
+            text = " ".join(line.strip() for line in section_lines if line.strip())
             if text:
                 # First sentence
                 first_sent = text.split(". ")[0] + "."

@@ -15,7 +15,6 @@ Commands:
 """
 
 import os
-import sys
 import json
 import subprocess
 import argparse
@@ -249,11 +248,16 @@ def main():
     args = parser.parse_args()
     state = load_state()
 
-    if args.command == "launch":       cmd_launch(args, state)
-    elif args.command == "status":     cmd_status(args, state)
-    elif args.command == "register":   cmd_register(args, state)
-    elif args.command == "check-reviews": cmd_check_reviews(args, state)
-    elif args.command == "cleanup":    cmd_cleanup(args, state)
+    if args.command == "launch":
+        cmd_launch(args, state)
+    elif args.command == "status":
+        cmd_status(args, state)
+    elif args.command == "register":
+        cmd_register(args, state)
+    elif args.command == "check-reviews":
+        cmd_check_reviews(args, state)
+    elif args.command == "cleanup":
+        cmd_cleanup(args, state)
     else:
         parser.print_help()
 

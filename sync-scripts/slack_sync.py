@@ -312,7 +312,7 @@ def sync_channel(client, channel: dict, state: dict, user_cache: dict,
 
     except SlackApiError as e:
         if e.response["error"] == "not_in_channel":
-            print(f"    Skipping (not a member)")
+            print("    Skipping (not a member)")
             return ("error", 0)
         print(f"    Error: {e.response['error']}")
         return ("error", 0)

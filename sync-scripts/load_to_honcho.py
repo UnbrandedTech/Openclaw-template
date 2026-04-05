@@ -21,7 +21,6 @@ from pathlib import Path
 
 from shared import (
     WORKSPACE,
-    MESSAGES_DIR,
     get_honcho,
     load_json,
     save_json,
@@ -252,9 +251,6 @@ def load_github(honcho, sync_state: dict, *, verbose: bool):
     if not repos:
         print("  No GitHub repos found.")
         return 0, 0
-
-    github_state = sync_state.get("github", {})
-    last_synced = github_state.get("last_synced_at", 0)
 
     # Build collaborator peers
     collab_peers: dict[str, object] = {}

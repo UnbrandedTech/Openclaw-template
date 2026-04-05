@@ -9,7 +9,6 @@ import shutil
 import subprocess
 import json
 import os
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re

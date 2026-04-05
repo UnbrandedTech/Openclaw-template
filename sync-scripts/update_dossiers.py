@@ -14,10 +14,9 @@ import argparse
 import json
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 
-from shared import VAULT_PATH, PEOPLE_DIR, HONCHO_BASE_URL, HONCHO_WORKSPACE, get_honcho, sanitize_id, USER_NAME, USER_TITLE
+from shared import PEOPLE_DIR, get_honcho, sanitize_id, USER_NAME, USER_TITLE
 from config import TRACKED_PEOPLE
 
 

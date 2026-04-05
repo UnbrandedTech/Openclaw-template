@@ -9,15 +9,11 @@ The agent (Jeff) decides what's worth adding.
 Usage: python3 slack_todo_scan.py [--hours 1]
 """
 
-import os
-import sys
 import json
-import time
 import argparse
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
+from datetime import datetime, timezone
 
-from shared import MESSAGES_DIR, load_json, save_json, script_lock, USER_SLACK_ID, USER_NAME_KEYWORDS, USER_FIRST_NAME
+from shared import MESSAGES_DIR, load_json, save_json, script_lock, USER_SLACK_ID, USER_FIRST_NAME
 from config import EXCLUDE_CHANNELS, CLIENT_CHANNEL_PREFIX
 STATE_FILE = MESSAGES_DIR / ".todo_scan_state.json"
 USERS_CACHE = MESSAGES_DIR / ".users_cache.json"
@@ -85,7 +81,6 @@ def scan_recent(hours: float = 1.0) -> list:
     scan_state = load_scan_state()
     user_id = USER_SLACK_ID
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).timestamp()
     candidates = []
 
     for jsonl in sorted(MESSAGES_DIR.glob("*.jsonl")):

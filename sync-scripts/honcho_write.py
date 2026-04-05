@@ -29,10 +29,8 @@ Usage:
 """
 
 import argparse
-import re
 import sys
 import time
-from pathlib import Path
 
 from shared import HONCHO_BASE_URL, HONCHO_WORKSPACE, get_honcho, WORKSPACE
 

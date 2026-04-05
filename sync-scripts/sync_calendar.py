@@ -14,7 +14,6 @@ Usage: python3 sync_calendar.py [--days 30] [--dry-run]
 
 import argparse
 import sys
-from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 

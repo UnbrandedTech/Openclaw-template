@@ -25,12 +25,10 @@ from pathlib import Path
 
 from shared import (
     WORKSPACE,
-    VAULT_PATH,
     PEOPLE_DIR,
     CLIENTS_DIR,
     get_honcho,
     load_json,
-    save_json,
     sanitize_id,
     USER_NAME,
     USER_TITLE,
@@ -122,7 +120,6 @@ def get_person_context(honcho, peer_id: str, person_name: str) -> str:
 def get_company_context(honcho, company_name: str, channels: list, contacts: list) -> str:
     """Query Honcho for everything it knows about a client company."""
     agent_peer = honcho.peer("agent-main")
-    role_label = f"{USER_NAME} ({USER_TITLE})" if USER_TITLE else USER_NAME
 
     channel_hint = ""
     if channels:
@@ -393,7 +390,7 @@ def main():
             time.sleep(RATE_LIMIT_SECONDS)
 
     # ── Summary ────────────────────────────────────────────────────────────
-    print(f"\n--- Done ---")
+    print("\n--- Done ---")
     print(f"  People written:  {stats['people_written']}")
     print(f"  People skipped:  {stats['people_skipped']}")
     print(f"  Clients written: {stats['clients_written']}")

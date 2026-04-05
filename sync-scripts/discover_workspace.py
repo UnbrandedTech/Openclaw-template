@@ -17,13 +17,12 @@ Usage:
 import argparse
 import json
 import os
-import sys
 import time
 from collections import Counter
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 
-from shared import WORKSPACE, MESSAGES_DIR, save_json, load_json, USER_NAME, USER_SLACK_ID, sanitize_id
+from shared import WORKSPACE, MESSAGES_DIR, save_json, load_json, USER_SLACK_ID, sanitize_id
 
 try:
     from slack_sdk import WebClient
@@ -153,7 +152,7 @@ NOISE_PATTERNS = [
 def discover_channels(bot_uids: set) -> dict:
     """Analyze local Slack data to find noise channels to exclude."""
     channels_meta_path = MESSAGES_DIR / "_channels.json"
-    channels_meta = load_json(channels_meta_path)
+    _ = load_json(channels_meta_path)
 
     exclude = []
     channel_analysis = {}
@@ -364,15 +363,15 @@ def main():
         print(f"\n  Would write discovered_people.json: {len(people['all_scored'])} people scored")
 
     # ── Summary ─────────────────────────────────────────────────────────
-    print(f"\nDiscovery complete:")
+    print("\nDiscovery complete:")
     print(f"  Bots:     {len(bot_uids)}")
     print(f"  Excluded: {len(channels['exclude_channels'])} channels")
     print(f"  People:   {len(people['all_scored'])} scored")
     if people["all_scored"]:
-        print(f"\n  Top 5 by interaction score:")
+        print("\n  Top 5 by interaction score:")
         for p in people["all_scored"][:5]:
             print(f"    {p['name']:25} score={p['score']:.0f}  DMs={p['dm_messages']}  channels={p['channels']}")
-    print(f"\n  Priority ranking will be determined by analyze_priorities.py (LLM)")
+    print("\n  Priority ranking will be determined by analyze_priorities.py (LLM)")
 
 
 if __name__ == "__main__":

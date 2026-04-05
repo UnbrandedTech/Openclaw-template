@@ -33,7 +33,6 @@ from shared import (
     MESSAGES_DIR,
     load_json,
     save_json,
-    sanitize_id,
     USER_NAME,
     USER_TITLE,
     USER_COMPANY,
@@ -585,21 +584,21 @@ def main():
 
     if args.dry_run:
         print("\n  [DRY RUN] Would send prompt to Claude Sonnet via Vertex AI.")
-        print(f"\n  Data summary:")
+        print("\n  Data summary:")
         if slack_people:
-            print(f"    Top 5 Slack contacts:")
+            print("    Top 5 Slack contacts:")
             for p in slack_people[:5]:
                 print(f"      {p['name']:25} DMs={p['dm_messages']}  channels={p['channel_count']}  score={p['score']}")
         if calendar_attendees:
-            print(f"    Top 5 calendar attendees:")
+            print("    Top 5 calendar attendees:")
             for a in calendar_attendees[:5]:
                 print(f"      {a['name']:25} meetings={a['meeting_count']}  email={a['email']}")
         if github_collabs:
-            print(f"    Top 5 GitHub collaborators:")
+            print("    Top 5 GitHub collaborators:")
             for g in github_collabs[:5]:
                 print(f"      {g['username']:25} PRs={g['pr_count']}  reviews={g['review_count']}")
         if channels:
-            print(f"    Top 5 channels:")
+            print("    Top 5 channels:")
             for c in channels[:5]:
                 print(f"      {c['name']:25} members={c['member_count']}  messages={c['message_count']}")
 
@@ -609,7 +608,7 @@ def main():
             print(f"\n  Existing team.json: {len(existing.get('tracked_people', {}))} tracked people, "
                   f"{len(existing.get('clients', {}))} clients")
         else:
-            print(f"\n  No existing team.json (will create new)")
+            print("\n  No existing team.json (will create new)")
 
         print("\n  [DRY RUN] No files written.")
         return
@@ -628,7 +627,7 @@ def main():
     channel_count = len(analysis.get("priority_channels", {}))
     deep_count = len(analysis.get("deep_reconcile_peers", {}))
 
-    print(f"\n  Analysis results:")
+    print("\n  Analysis results:")
     print(f"    Tracked people:      {people_count}")
     print(f"    Clients identified:  {clients_count}")
     print(f"    Priority DM users:   {dm_count}")
@@ -650,9 +649,9 @@ def main():
 
     # ── Summary ────────────────────────────────────────────────────────
 
-    print(f"\nAnalysis complete.")
+    print("\nAnalysis complete.")
     if analysis.get("clients"):
-        print(f"\n  Identified clients:")
+        print("\n  Identified clients:")
         for name, info in analysis["clients"].items():
             contacts = ", ".join(info.get("contacts", []))
             print(f"    {name} ({info.get('domain', '?')}) — {info.get('priority', '?')} priority")
@@ -662,7 +661,7 @@ def main():
                 print(f"      channel: {info['channel']}")
 
     if analysis.get("deep_reconcile_peers"):
-        print(f"\n  Deep reconcile peers (top priority for context tracking):")
+        print("\n  Deep reconcile peers (top priority for context tracking):")
         for peer_id, display_name in analysis["deep_reconcile_peers"].items():
             print(f"    {peer_id}: {display_name}")
 
