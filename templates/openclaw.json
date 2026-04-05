@@ -1,4 +1,8 @@
 {
+  "models": {
+    "fast": "vertex/gemini-2.5-flash",
+    "reasoning": "vertex/claude-sonnet-4-6"
+  },
   "auth": {
     "profiles": {
       "vertex:default": {
@@ -25,5 +29,5 @@
       }
     ]
   },
-  "_comment": "Uses Vertex AI (GCP). Run 'gcloud auth application-default login' to authenticate. Change region if Claude isn't available in us-east5 for your project."
+  "_comment": "Default uses Vertex AI (GCP). Change 'models' to switch providers: openai/, anthropic/, ollama/, bedrock/. Scripts reference the 'fast' and 'reasoning' roles, not specific model IDs."
 }

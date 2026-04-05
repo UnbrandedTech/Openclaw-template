@@ -105,144 +105,311 @@ else
     warn "Skipping Slack setup"
 fi
 
-# ─── Phase 7: Google Cloud (Vertex AI + Workspace) ────────────────
+# ─── Phase 7: AI Provider + Google Cloud ─────────────────────────
 
-step "Phase 7: Google Cloud authentication"
+step "Phase 7: AI provider setup"
+
+echo "Which AI provider will you use?"
+echo ""
+echo "  1) Vertex AI   — Gemini + Claude via Google Cloud (recommended)"
+echo "  2) OpenAI      — GPT-4o-mini (fast) + GPT-4o (reasoning)"
+echo "  3) Anthropic   — Claude Haiku (fast) + Claude Sonnet (reasoning)"
+echo "  4) Ollama      — Local models, no API costs"
+echo "  5) AWS Bedrock — Claude via AWS"
+echo ""
+ask "Choose (1-5, default 1):"
+
+case "${REPLY:-1}" in
+    2) AI_PROVIDER="openai"    ; FAST_MODEL="openai/gpt-4o-mini"                       ; REASONING_MODEL="openai/gpt-4o" ;;
+    3) AI_PROVIDER="anthropic" ; FAST_MODEL="anthropic/claude-haiku-4-5-20251001"       ; REASONING_MODEL="anthropic/claude-sonnet-4-6" ;;
+    4) AI_PROVIDER="ollama"    ; FAST_MODEL="ollama/llama3.1"                           ; REASONING_MODEL="ollama/llama3.1" ;;
+    5) AI_PROVIDER="bedrock"   ; FAST_MODEL="bedrock/anthropic.claude-haiku-4-5-20251001" ; REASONING_MODEL="bedrock/anthropic.claude-sonnet-4-6" ;;
+    *) AI_PROVIDER="vertex"    ; FAST_MODEL="vertex/gemini-2.5-flash"                   ; REASONING_MODEL="vertex/claude-sonnet-4-6" ;;
+esac
+
+log "Selected provider: $AI_PROVIDER"
+
+# ── Provider-specific auth ──────────────────────────────────────
 
 CLIENT_SECRET="$SCRIPT_DIR/templates/client_secret.json"
-GCP_PROJECT=$(jq -r '.auth.profiles["vertex:default"].project_id' "$SCRIPT_DIR/templates/openclaw.json")
-GCP_REGION=$(jq -r '.auth.profiles["vertex:default"].region' "$SCRIPT_DIR/templates/openclaw.json")
 GCP_OK=true
+AI_OK=true
 
-# All scopes needed: Vertex AI (cloud-platform) + Gmail + Calendar + Drive
-ALL_SCOPES="https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/calendar.readonly,https://www.googleapis.com/auth/drive.readonly"
+if [ "$AI_PROVIDER" = "vertex" ]; then
+    # ── Vertex AI: full GCP auth flow ───────────────────────────
+    GCP_PROJECT=$(jq -r '.auth.profiles["vertex:default"].project_id' "$SCRIPT_DIR/templates/openclaw.json")
+    GCP_REGION=$(jq -r '.auth.profiles["vertex:default"].region' "$SCRIPT_DIR/templates/openclaw.json")
 
-# 1. Check gcloud is installed
-if ! command -v gcloud &>/dev/null; then
-    err "gcloud CLI not found. Install it:"
-    err "  brew install --cask google-cloud-sdk"
-    GCP_OK=false
-fi
+    ALL_SCOPES="https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/calendar.readonly,https://www.googleapis.com/auth/drive.readonly"
 
-# 2. Check client_secret.json exists
-if [ ! -f "$CLIENT_SECRET" ]; then
-    err "OAuth client_secret.json not found at $CLIENT_SECRET"
-    err "Ask your admin for the client_secret JSON from the GCP project."
-    GCP_OK=false
-fi
+    if ! command -v gcloud &>/dev/null; then
+        err "gcloud CLI not found. Install it:"
+        err "  brew install --cask google-cloud-sdk"
+        GCP_OK=false
+    fi
 
-# 3. Single login — Vertex AI + Gmail + Calendar + Drive in one consent screen
-if [ "$GCP_OK" = true ]; then
-    if gcloud auth application-default print-access-token &>/dev/null 2>&1; then
-        log "GCP credentials already exist"
-        ask "Re-authenticate to ensure all scopes (Vertex + Gmail + Calendar + Drive)? (y/n)"
-        if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]; then
+    if [ ! -f "$CLIENT_SECRET" ]; then
+        err "OAuth client_secret.json not found at $CLIENT_SECRET"
+        err "Ask your admin for the client_secret JSON from the GCP project."
+        GCP_OK=false
+    fi
+
+    if [ "$GCP_OK" = true ]; then
+        if gcloud auth application-default print-access-token &>/dev/null 2>&1; then
+            log "GCP credentials already exist"
+            ask "Re-authenticate to ensure all scopes (Vertex + Gmail + Calendar + Drive)? (y/n)"
+            if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]; then
+                gcloud auth application-default login \
+                    --client-id-file="$CLIENT_SECRET" \
+                    --scopes="$ALL_SCOPES" \
+                    --project="$GCP_PROJECT"
+            fi
+        else
+            log "Opening browser for Google authentication..."
+            echo "  This will grant access to: Vertex AI, Gmail, Calendar, and Drive"
+            echo ""
             gcloud auth application-default login \
                 --client-id-file="$CLIENT_SECRET" \
                 --scopes="$ALL_SCOPES" \
                 --project="$GCP_PROJECT"
         fi
-    else
-        log "Opening browser for Google authentication..."
-        echo "  This will grant access to: Vertex AI, Gmail, Calendar, and Drive"
-        echo ""
-        gcloud auth application-default login \
-            --client-id-file="$CLIENT_SECRET" \
-            --scopes="$ALL_SCOPES" \
-            --project="$GCP_PROJECT"
-    fi
 
-    if gcloud auth application-default print-access-token &>/dev/null 2>&1; then
-        log "Authenticated successfully"
-    else
-        err "Authentication failed."
-        GCP_OK=false
-    fi
-fi
-
-# 4. Check project access
-if [ "$GCP_OK" = true ]; then
-    if gcloud projects describe "$GCP_PROJECT" &>/dev/null 2>&1; then
-        log "GCP project '$GCP_PROJECT' accessible"
-    else
-        err "Cannot access GCP project '$GCP_PROJECT'."
-        warn "Make sure you have been granted access to the project."
-        GCP_OK=false
-    fi
-fi
-
-# 5. Check APIs are enabled
-if [ "$GCP_OK" = true ]; then
-    ENABLED_APIS=$(gcloud services list --enabled --project="$GCP_PROJECT" 2>/dev/null)
-    for api in aiplatform.googleapis.com gmail.googleapis.com calendar-json.googleapis.com drive.googleapis.com; do
-        if echo "$ENABLED_APIS" | grep -q "$api"; then
-            log "$api enabled"
+        if gcloud auth application-default print-access-token &>/dev/null 2>&1; then
+            log "Authenticated successfully"
         else
-            warn "$api not enabled — attempting to enable..."
-            gcloud services enable "$api" --project="$GCP_PROJECT" 2>/dev/null && \
-                log "Enabled $api" || \
-                warn "Could not enable $api — ask your admin"
+            err "Authentication failed."
+            GCP_OK=false
         fi
-    done
-fi
-
-# 6. Test Vertex AI — one Gemini Flash call + one Claude Sonnet call
-if [ "$GCP_OK" = true ]; then
-    ACCESS_TOKEN=$(gcloud auth application-default print-access-token 2>/dev/null)
-
-    # Test Gemini Flash (used for most crons + heartbeat)
-    echo -n "  Testing Gemini Flash... "
-    FLASH_URL="https://${GCP_REGION}-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT}/locations/${GCP_REGION}/publishers/google/models/gemini-2.5-flash:generateContent"
-    FLASH_RESULT=$(curl -s -o /dev/null -w "%{http_code}" \
-        -X POST "$FLASH_URL" \
-        -H "Authorization: Bearer $ACCESS_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d '{"contents":[{"parts":[{"text":"hi"}]}],"generationConfig":{"maxOutputTokens":1}}' \
-        --connect-timeout 10 2>/dev/null)
-    if [ "$FLASH_RESULT" = "200" ]; then
-        log "Gemini Flash OK"
-    else
-        err "Gemini Flash failed (HTTP $FLASH_RESULT)"
-        GCP_OK=false
     fi
 
-    # Test Claude Sonnet (used for EOD dossier merging)
-    echo -n "  Testing Claude Sonnet... "
-    SONNET_URL="https://${GCP_REGION}-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT}/locations/${GCP_REGION}/publishers/anthropic/models/claude-sonnet-4-6:rawPredict"
-    SONNET_RESULT=$(curl -s -o /dev/null -w "%{http_code}" \
-        -X POST "$SONNET_URL" \
-        -H "Authorization: Bearer $ACCESS_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d '{"anthropic_version":"vertex-2023-10-16","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' \
-        --connect-timeout 10 2>/dev/null)
-    if [ "$SONNET_RESULT" = "200" ]; then
-        log "Claude Sonnet OK"
-    else
-        err "Claude Sonnet failed (HTTP $SONNET_RESULT)"
-        if [ "$SONNET_RESULT" = "404" ]; then
-            warn "Claude may not be available in region '$GCP_REGION'."
-            warn "Try: us-east5, us-central1, or europe-west1."
-        elif [ "$SONNET_RESULT" = "403" ]; then
-            warn "Permission denied. Check IAM roles (Vertex AI User) on project '$GCP_PROJECT'."
+    if [ "$GCP_OK" = true ]; then
+        if gcloud projects describe "$GCP_PROJECT" &>/dev/null 2>&1; then
+            log "GCP project '$GCP_PROJECT' accessible"
+        else
+            err "Cannot access GCP project '$GCP_PROJECT'."
+            warn "Make sure you have been granted access to the project."
+            GCP_OK=false
         fi
-        GCP_OK=false
+    fi
+
+    if [ "$GCP_OK" = true ]; then
+        ENABLED_APIS=$(gcloud services list --enabled --project="$GCP_PROJECT" 2>/dev/null)
+        for api in aiplatform.googleapis.com gmail.googleapis.com calendar-json.googleapis.com drive.googleapis.com; do
+            if echo "$ENABLED_APIS" | grep -q "$api"; then
+                log "$api enabled"
+            else
+                warn "$api not enabled — attempting to enable..."
+                gcloud services enable "$api" --project="$GCP_PROJECT" 2>/dev/null && \
+                    log "Enabled $api" || \
+                    warn "Could not enable $api — ask your admin"
+            fi
+        done
+    fi
+
+    # Test Vertex AI models
+    if [ "$GCP_OK" = true ]; then
+        ACCESS_TOKEN=$(gcloud auth application-default print-access-token 2>/dev/null)
+
+        echo -n "  Testing Gemini Flash... "
+        FLASH_URL="https://${GCP_REGION}-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT}/locations/${GCP_REGION}/publishers/google/models/gemini-2.5-flash:generateContent"
+        FLASH_RESULT=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "$FLASH_URL" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"contents":[{"parts":[{"text":"hi"}]}],"generationConfig":{"maxOutputTokens":1}}' \
+            --connect-timeout 10 2>/dev/null)
+        if [ "$FLASH_RESULT" = "200" ]; then
+            log "Gemini Flash OK"
+        else
+            err "Gemini Flash failed (HTTP $FLASH_RESULT)"
+            AI_OK=false
+        fi
+
+        echo -n "  Testing Claude Sonnet... "
+        SONNET_URL="https://${GCP_REGION}-aiplatform.googleapis.com/v1/projects/${GCP_PROJECT}/locations/${GCP_REGION}/publishers/anthropic/models/claude-sonnet-4-6:rawPredict"
+        SONNET_RESULT=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "$SONNET_URL" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"anthropic_version":"vertex-2023-10-16","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' \
+            --connect-timeout 10 2>/dev/null)
+        if [ "$SONNET_RESULT" = "200" ]; then
+            log "Claude Sonnet OK"
+        else
+            err "Claude Sonnet failed (HTTP $SONNET_RESULT)"
+            if [ "$SONNET_RESULT" = "404" ]; then
+                warn "Claude may not be available in region '$GCP_REGION'."
+                warn "Try: us-east5, us-central1, or europe-west1."
+            elif [ "$SONNET_RESULT" = "403" ]; then
+                warn "Permission denied. Check IAM roles (Vertex AI User) on project '$GCP_PROJECT'."
+            fi
+            AI_OK=false
+        fi
+    fi
+
+elif [ "$AI_PROVIDER" = "openai" ]; then
+    # ── OpenAI ──────────────────────────────────────────────────
+    ask "OpenAI API key (or Enter to set OPENAI_API_KEY env var later):"
+    if [ -n "$REPLY" ]; then
+        mkdir -p "$WORKSPACE"
+        echo "OPENAI_API_KEY=$REPLY" >> "$WORKSPACE/.env"
+        chmod 600 "$WORKSPACE/.env"
+        export OPENAI_API_KEY="$REPLY"
+
+        echo -n "  Testing OpenAI API... "
+        TEST_RESULT=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "https://api.openai.com/v1/chat/completions" \
+            -H "Authorization: Bearer $REPLY" \
+            -H "Content-Type: application/json" \
+            -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}],"max_tokens":1}' \
+            --connect-timeout 10 2>/dev/null)
+        if [ "$TEST_RESULT" = "200" ]; then
+            log "OpenAI API OK"
+        else
+            err "OpenAI API test failed (HTTP $TEST_RESULT)"
+            AI_OK=false
+        fi
+    else
+        warn "Set OPENAI_API_KEY before running sync scripts."
+        AI_OK=false
+    fi
+
+elif [ "$AI_PROVIDER" = "anthropic" ]; then
+    # ── Anthropic ───────────────────────────────────────────────
+    ask "Anthropic API key (or Enter to set ANTHROPIC_API_KEY env var later):"
+    if [ -n "$REPLY" ]; then
+        mkdir -p "$WORKSPACE"
+        echo "ANTHROPIC_API_KEY=$REPLY" >> "$WORKSPACE/.env"
+        chmod 600 "$WORKSPACE/.env"
+        export ANTHROPIC_API_KEY="$REPLY"
+
+        echo -n "  Testing Anthropic API... "
+        TEST_RESULT=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "https://api.anthropic.com/v1/messages" \
+            -H "x-api-key: $REPLY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "Content-Type: application/json" \
+            -d '{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' \
+            --connect-timeout 10 2>/dev/null)
+        if [ "$TEST_RESULT" = "200" ]; then
+            log "Anthropic API OK"
+        else
+            err "Anthropic API test failed (HTTP $TEST_RESULT)"
+            AI_OK=false
+        fi
+    else
+        warn "Set ANTHROPIC_API_KEY before running sync scripts."
+        AI_OK=false
+    fi
+
+elif [ "$AI_PROVIDER" = "ollama" ]; then
+    # ── Ollama ──────────────────────────────────────────────────
+    if ! command -v ollama &>/dev/null; then
+        warn "Ollama not found. Install: https://ollama.ai"
+        AI_OK=false
+    else
+        log "Ollama found"
+    fi
+
+    ask "Model to use? (default: llama3.1)"
+    if [ -n "$REPLY" ]; then
+        FAST_MODEL="ollama/$REPLY"
+        REASONING_MODEL="ollama/$REPLY"
+    fi
+
+    if command -v ollama &>/dev/null; then
+        OLLAMA_MODEL="${FAST_MODEL#ollama/}"
+        echo -n "  Checking model $OLLAMA_MODEL... "
+        if ollama list 2>/dev/null | grep -q "$OLLAMA_MODEL"; then
+            log "$OLLAMA_MODEL available"
+        else
+            warn "$OLLAMA_MODEL not pulled yet. Pulling..."
+            ollama pull "$OLLAMA_MODEL" || AI_OK=false
+        fi
+    fi
+
+elif [ "$AI_PROVIDER" = "bedrock" ]; then
+    # ── AWS Bedrock ─────────────────────────────────────────────
+    if ! command -v aws &>/dev/null; then
+        err "AWS CLI not found. Install: https://aws.amazon.com/cli/"
+        AI_OK=false
+    else
+        log "AWS CLI found"
+    fi
+
+    ask "AWS region for Bedrock (default: us-east-1):"
+    BEDROCK_REGION="${REPLY:-us-east-1}"
+
+    if command -v aws &>/dev/null; then
+        echo -n "  Testing Bedrock access... "
+        aws bedrock list-foundation-models --region "$BEDROCK_REGION" --max-results 1 &>/dev/null 2>&1 && \
+            log "Bedrock accessible" || { err "Bedrock access failed. Check AWS credentials."; AI_OK=false; }
     fi
 fi
 
-# Copy OpenClaw config
+# ── Generate openclaw.json ──────────────────────────────────────
+
 if [ ! -f "$OPENCLAW_DIR/openclaw.json" ]; then
-    cp "$SCRIPT_DIR/templates/openclaw.json" "$OPENCLAW_DIR/openclaw.json"
-    log "Created openclaw.json (Vertex AI, project: $GCP_PROJECT, region: $GCP_REGION)"
+    mkdir -p "$OPENCLAW_DIR"
+
+    if [ "$AI_PROVIDER" = "vertex" ]; then
+        # Vertex: use template (has project/region)
+        cp "$SCRIPT_DIR/templates/openclaw.json" "$OPENCLAW_DIR/openclaw.json"
+        log "Created openclaw.json (Vertex AI, project: $GCP_PROJECT, region: $GCP_REGION)"
+    else
+        # Non-Vertex: generate config with selected provider
+        AUTH_PROFILE=""
+        case "$AI_PROVIDER" in
+            openai)    AUTH_PROFILE='"openai:default": {"provider": "openai", "api_key_env": "OPENAI_API_KEY"}' ;;
+            anthropic) AUTH_PROFILE='"anthropic:default": {"provider": "anthropic", "api_key_env": "ANTHROPIC_API_KEY"}' ;;
+            ollama)    AUTH_PROFILE='"ollama:default": {"provider": "ollama", "base_url": "http://localhost:11434"}' ;;
+            bedrock)   AUTH_PROFILE="\"bedrock:default\": {\"provider\": \"bedrock\", \"region\": \"$BEDROCK_REGION\"}" ;;
+        esac
+
+        cat > "$OPENCLAW_DIR/openclaw.json" << CONFIGEOF
+{
+  "models": {
+    "fast": "$FAST_MODEL",
+    "reasoning": "$REASONING_MODEL"
+  },
+  "auth": {
+    "profiles": {
+      $AUTH_PROFILE
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "$FAST_MODEL"
+      }
+    },
+    "list": [
+      {
+        "id": "main",
+        "model": "$FAST_MODEL",
+        "heartbeat": {
+          "enabled": true,
+          "intervalMs": 3600000
+        }
+      }
+    ]
+  }
+}
+CONFIGEOF
+        log "Created openclaw.json ($AI_PROVIDER)"
+    fi
 else
     log "openclaw.json exists"
 fi
 
-# Save client_secret for gogcli/vdirsyncer to use
-cp "$CLIENT_SECRET" "$WORKSPACE/.client_secret.json" 2>/dev/null
-chmod 600 "$WORKSPACE/.client_secret.json" 2>/dev/null
+# Save client_secret for gogcli/vdirsyncer (needed regardless of AI provider)
+if [ -f "$CLIENT_SECRET" ]; then
+    cp "$CLIENT_SECRET" "$WORKSPACE/.client_secret.json" 2>/dev/null
+    chmod 600 "$WORKSPACE/.client_secret.json" 2>/dev/null
+fi
 
-if [ "$GCP_OK" = false ]; then
-    warn "Some GCP checks failed. OpenClaw may not work until these are resolved."
+if [ "$AI_OK" = false ]; then
+    warn "AI provider tests failed. Sync scripts may not work until resolved."
 fi
 
 # ─── Phase 8: Google Workspace tools ──────────────────────────────
