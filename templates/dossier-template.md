@@ -45,7 +45,7 @@ What works, what doesn't. Writing quirks. Pet peeves.
 
 ## Working Relationship
 
-How they relate to James. Trust level, alignment, friction points.
+How they relate to you. Trust level, alignment, friction points.
 Topics of agreement and disagreement. Sensitivities to be aware of.
 
 ## Current Focus

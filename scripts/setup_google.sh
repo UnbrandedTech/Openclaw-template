@@ -1,66 +1,75 @@
 #!/bin/bash
-# Set up Google Workspace (Gmail, Calendar, Drive)
+# Set up Google Workspace tools (gogcli + vdirsyncer)
+# Auth is already done in Phase 7 — this just configures the tools.
 
-# gogcli
+CLIENT_SECRET="$WORKSPACE/.client_secret.json"
+CLIENT_ID=$(jq -r '.installed.client_id' "$CLIENT_SECRET" 2>/dev/null)
+CLIENT_SECRET_VAL=$(jq -r '.installed.client_secret' "$CLIENT_SECRET" 2>/dev/null)
+
+# ── 1. gogcli (Google OAuth CLI for Gmail) ───────────────────────────
+
 if ! command -v gog &>/dev/null; then
     echo "Installing gogcli..."
     TMPDIR=$(mktemp -d)
-    cd "$TMPDIR"
-    git clone https://github.com/steipete/gogcli.git
-    cd gogcli
-    make
-    mkdir -p ~/.local/bin
-    cp gog ~/.local/bin/
-    cd ~
-    rm -rf "$TMPDIR"
+    if ! command -v make &>/dev/null; then
+        err "Cannot build gogcli: 'make' not found. Install Xcode CLI tools first:"
+        err "  xcode-select --install"
+        warn "Skipping gogcli installation."
+    else
+        (
+            cd "$TMPDIR"
+            git clone https://github.com/steipete/gogcli.git
+            cd gogcli
+            make
+            mkdir -p ~/.local/bin
+            cp gog ~/.local/bin/
+        )
+        rm -rf "$TMPDIR"
 
-    # Add to PATH if needed
-    if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
-        echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
-        export PATH="$HOME/.local/bin:$PATH"
+        if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
+            export PATH="$HOME/.local/bin:$PATH"
+        fi
+        log "gogcli installed to ~/.local/bin/gog"
     fi
-    log "gogcli installed to ~/.local/bin/gog"
 else
     log "gogcli already installed"
 fi
 
-echo ""
-echo "Google OAuth setup:"
-echo "  If your org already has an OAuth client (marathondataco.com does),"
-echo "  just use the existing client_secret JSON file."
-echo ""
-echo "  Otherwise:"
-echo "  1. Go to console.cloud.google.com"
-echo "  2. Create a project, enable Gmail/Calendar/Drive APIs"
-echo "  3. Create OAuth 2.0 Client ID (Desktop type)"
-echo "  4. Download the client_secret JSON"
-echo ""
+# Configure gogcli with the shared OAuth client
+if command -v gog &>/dev/null && [ -f "$CLIENT_SECRET" ]; then
+    if ! gog auth list 2>/dev/null | grep -q "@"; then
+        log "Setting up gogcli with shared OAuth credentials..."
+        gog auth credentials "$CLIENT_SECRET"
 
-ask "Path to client_secret JSON (or press Enter to skip):"
-if [ -n "$REPLY" ] && [ -f "$REPLY" ]; then
-    gog auth credentials "$REPLY"
-    log "OAuth credentials loaded"
-
-    ask "Google account email to authenticate:"
-    if [ -n "$REPLY" ]; then
-        gog auth add "$REPLY"
-        log "Authenticated as $REPLY"
-
-        # Save for TOOLS.md
-        echo "GOG_ACCOUNT=$REPLY" >> "$WORKSPACE/.google_env"
+        ask "Google account email to authenticate gogcli:"
+        if [ -n "$REPLY" ]; then
+            gog auth add "$REPLY"
+            log "gogcli authenticated as $REPLY"
+            echo "GOG_ACCOUNT=$REPLY" >> "$WORKSPACE/.google_env"
+        fi
+    else
+        log "gogcli already authenticated"
     fi
 else
-    warn "Skipping Google auth. Run 'gog auth credentials <json>' later."
+    if ! command -v gog &>/dev/null; then
+        warn "gogcli not installed — Gmail sync won't work"
+    fi
 fi
 
-# vdirsyncer + khal for calendar
-pip3 install --break-system-packages vdirsyncer khal 2>/dev/null || pip3 install vdirsyncer khal
+# ── 2. vdirsyncer + khal for calendar ───────────────────────────────
+
+"$HOME/.openclaw/venv/bin/pip" install vdirsyncer khal
 
 if [ ! -f ~/.config/vdirsyncer/config ]; then
     mkdir -p ~/.config/vdirsyncer
     mkdir -p ~/.local/share/vdirsyncer/{status,calendars}
 
-    cat > ~/.config/vdirsyncer/config << 'VDIREOF'
+    # Use the same OAuth client credentials
+    VDIR_CLIENT_ID="${CLIENT_ID:-YOUR_CLIENT_ID}"
+    VDIR_CLIENT_SECRET="${CLIENT_SECRET_VAL:-YOUR_CLIENT_SECRET}"
+
+    cat > ~/.config/vdirsyncer/config << VDIREOF
 [general]
 status_path = "~/.local/share/vdirsyncer/status/"
 
@@ -77,15 +86,20 @@ fileext = ".ics"
 [storage calendars_remote]
 type = "google_calendar"
 token_file = "~/.config/vdirsyncer/google_token"
-client_id = "YOUR_CLIENT_ID"
-client_secret = "YOUR_CLIENT_SECRET"
+client_id = "$VDIR_CLIENT_ID"
+client_secret = "$VDIR_CLIENT_SECRET"
 VDIREOF
-    warn "vdirsyncer config created at ~/.config/vdirsyncer/config"
-    warn "You need to fill in client_id and client_secret, then run:"
-    warn "  vdirsyncer discover calendars"
-    warn "  vdirsyncer sync"
+
+    if [ "$VDIR_CLIENT_ID" != "YOUR_CLIENT_ID" ]; then
+        log "vdirsyncer config created with OAuth credentials"
+        warn "Run these to finish calendar setup:"
+        warn "  vdirsyncer discover calendars"
+        warn "  vdirsyncer sync"
+    else
+        warn "vdirsyncer config created but missing OAuth credentials"
+    fi
 else
     log "vdirsyncer already configured"
 fi
 
-log "Google Workspace setup complete"
+log "Google Workspace tools ready"

@@ -2,7 +2,15 @@
 *.env
 .slack_env
 .google_env
+templates/client_secret.json
 node_modules/
 
 # OS
 .DS_Store
+
+# Claude Code local settings
+.claude/
+
+# Python
+__pycache__/
+*.pyc

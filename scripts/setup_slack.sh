@@ -41,5 +41,5 @@ else
 fi
 
 # Install SDK
-pip3 install --break-system-packages slack-sdk 2>/dev/null || pip3 install slack-sdk
+"$HOME/.openclaw/venv/bin/pip" install slack-sdk
 log "Slack SDK installed"

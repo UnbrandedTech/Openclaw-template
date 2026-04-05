@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-slack_todo_scan.py — Scan recent Slack messages for action items directed at James
+slack_todo_scan.py — Scan recent Slack messages for action items directed at the user
 and surface them for the agent to review and add to TODO.md.
 
 Outputs a JSON list of candidate todos to stdout.
@@ -9,53 +9,30 @@ The agent (Jeff) decides what's worth adding.
 Usage: python3 slack_todo_scan.py [--hours 1]
 """
 
-import os
-import sys
 import json
-import time
 import argparse
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
+from datetime import datetime, timezone
 
-MESSAGES_DIR = Path.home() / ".openclaw" / "workspace" / "slack_messages"
+from shared import MESSAGES_DIR, load_json, save_json, script_lock, USER_SLACK_ID, USER_FIRST_NAME
+from config import EXCLUDE_CHANNELS, CLIENT_CHANNEL_PREFIX
 STATE_FILE = MESSAGES_DIR / ".todo_scan_state.json"
 USERS_CACHE = MESSAGES_DIR / ".users_cache.json"
 
-# James's Slack user IDs (will be detected from messages where he's sender)
-# We also look for mentions of "james" or the bot
-JAMES_KEYWORDS = ["james", "jkenaley", "kenaley"]
-
-# Signal phrases that suggest something is actionable for James
+# Signal phrases that suggest something is actionable for the user
 ACTION_SIGNALS = [
     "can you", "could you", "would you", "will you",
     "please", "need you to", "want you to",
-    "hey james", "hi james", "@james",
+    f"hey {USER_FIRST_NAME.lower()}", f"hi {USER_FIRST_NAME.lower()}",
     "follow up", "follow-up", "followup",
     "don't forget", "dont forget", "remember to",
     "lmk", "let me know",
-    "waiting on you", "waiting on james",
+    "waiting on you", f"waiting on {USER_FIRST_NAME.lower()}",
     "action item", "todo", "to-do", "to do",
     "when you get a chance",
     "asap", "urgent", "important",
     "can we", "should we", "we need to",
     "heads up",
 ]
-
-# Noise channels to skip (automated alerts, logs, etc.)
-SKIP_CHANNELS = {
-    "connectors-health", "pipeline-success", "pipeline-fail",
-    "pipeline-logs", "prod-pipeline-logs", "prod-pipeline-fail",
-    "prod-pipeline-success", "stage-notifications", "sentry-alerts",
-    "deployments", "airbyte-webhook-notifications", "airbyte-job-failures",
-    "airbyte-stuck-jobs", "airbyte-connection-tracking",
-    "prod-elementary-reports", "stage-elementary-reports",
-    "email-logs", "stipe-logs", "data-elementary", "data-airflow",
-    "linkedin-videos", "weekly-customer-stories",
-}
-
-# Client channels (marathon-{client}) require a direct @mention of James to be actionable.
-# Without an explicit mention, messages there are team-wide and not James's task.
-CLIENT_CHANNEL_PREFIX = "marathon-"
 
 
 def load_users():
@@ -66,27 +43,23 @@ def load_users():
 
 
 def load_scan_state():
-    if STATE_FILE.exists():
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {}
+    return load_json(STATE_FILE)
 
 
 def save_scan_state(state):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    save_json(STATE_FILE, state)
 
 
-def is_actionable(text: str, channel_name: str, users: dict, james_id: str) -> bool:
+def is_actionable(text: str, channel_name: str, users: dict, user_id: str) -> bool:
     """Quick heuristic check — final decision made by agent."""
     text_lower = text.lower()
-    is_direct_mention = james_id and f"<@{james_id}>" in text
+    is_direct_mention = user_id and f"<@{user_id}>" in text
 
-    # Client channels (marathon-*): ONLY actionable if James is directly @mentioned
+    # Client channels: ONLY actionable if user is directly @mentioned
     if channel_name.startswith(CLIENT_CHANNEL_PREFIX):
         return is_direct_mention
 
-    # Direct mention of James anywhere else
+    # Direct mention of user anywhere else
     if is_direct_mention:
         return True
 
@@ -102,46 +75,19 @@ def is_actionable(text: str, channel_name: str, users: dict, james_id: str) -> b
     return False
 
 
-def detect_james_id(messages_dir: Path) -> str:
-    """Try to detect James's Slack user ID from sent messages."""
-    # Look for a pattern where the user field matches across multiple DMs
-    # We can infer this from the dm_ files — messages sent by the same user
-    id_counts = {}
-    for jsonl in list(messages_dir.glob("dm_U*.jsonl"))[:20]:
-        with open(jsonl) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    msg = json.loads(line)
-                    uid = msg.get("user")
-                    if uid and uid.startswith("U"):
-                        id_counts[uid] = id_counts.get(uid, 0) + 1
-                except Exception:
-                    pass
-    # The most frequent sender across DMs is likely James
-    if id_counts:
-        return max(id_counts, key=id_counts.get)
-    return ""
-
-
 def scan_recent(hours: float = 1.0) -> list:
     """Scan messages from last N hours for potential action items."""
     users = load_users()
     scan_state = load_scan_state()
-    james_id = scan_state.get("james_id") or detect_james_id(MESSAGES_DIR)
-    if james_id:
-        scan_state["james_id"] = james_id
+    user_id = USER_SLACK_ID
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).timestamp()
     candidates = []
 
     for jsonl in sorted(MESSAGES_DIR.glob("*.jsonl")):
         channel_name = jsonl.stem
 
         # Skip noise channels
-        if channel_name in SKIP_CHANNELS:
+        if channel_name in EXCLUDE_CHANNELS:
             continue
         if channel_name.startswith("."):
             continue
@@ -166,8 +112,8 @@ def scan_recent(hours: float = 1.0) -> list:
                     if ts > new_last_ts:
                         new_last_ts = ts
 
-                    # Skip messages James sent himself (we want things directed AT him)
-                    if msg.get("user") == james_id:
+                    # Skip messages the user sent (we want things directed AT them)
+                    if msg.get("user") == user_id:
                         continue
 
                     # Skip bot messages
@@ -178,10 +124,10 @@ def scan_recent(hours: float = 1.0) -> list:
                     if not text or len(text) < 5:
                         continue
 
-                    if is_actionable(text, channel_name, users, james_id):
+                    if is_actionable(text, channel_name, users, user_id):
                         sender_id = msg.get("user", "")
                         sender_name = users.get(sender_id, sender_id) or sender_id
-                        ts_dt = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+                        ts_dt = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
 
                         candidates.append({
                             "channel": channel_name,
@@ -215,13 +161,14 @@ def main():
     parser.add_argument("--all", action="store_true", help="Scan all stored messages (ignores last-scan state)")
     args = parser.parse_args()
 
-    if args.all:
-        # Reset scan state to re-process everything
-        if STATE_FILE.exists():
-            STATE_FILE.unlink()
+    with script_lock("slack_todo_scan"):
+        if args.all:
+            # Reset scan state to re-process everything
+            if STATE_FILE.exists():
+                STATE_FILE.unlink()
 
-    candidates = scan_recent(hours=args.hours if not args.all else 24 * 14)
-    print(json.dumps(candidates, indent=2))
+        candidates = scan_recent(hours=args.hours if not args.all else 24 * 14)
+        print(json.dumps(candidates, indent=2))
 
 
 if __name__ == "__main__":

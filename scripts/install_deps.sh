@@ -1,6 +1,17 @@
 #!/bin/bash
 # Install prerequisites on macOS
 
+# Xcode command line tools (needed for compiling some dependencies)
+if ! xcode-select -p &>/dev/null; then
+    log "Installing Xcode command line tools..."
+    xcode-select --install
+    echo "Waiting for Xcode CLI tools to finish installing..."
+    echo "Press Enter when the installation is complete."
+    read -r
+else
+    log "Xcode CLI tools already installed"
+fi
+
 # Homebrew
 if ! command -v brew &>/dev/null; then
     log "Installing Homebrew..."
@@ -47,6 +58,26 @@ fi
 if ! command -v jq &>/dev/null; then
     brew install jq
     log "Installed jq"
+fi
+
+# Google Cloud SDK (for Vertex AI auth)
+if ! command -v gcloud &>/dev/null; then
+    log "Installing Google Cloud SDK..."
+    brew install --cask google-cloud-sdk
+    log "Google Cloud SDK installed"
+    warn "Run 'gcloud auth application-default login' after setup"
+else
+    log "Google Cloud SDK already installed"
+fi
+
+# Python venv for sync scripts
+VENV="$HOME/.openclaw/venv"
+if [ ! -d "$VENV" ]; then
+    log "Creating Python venv at $VENV..."
+    python3 -m venv "$VENV"
+    log "Python venv created"
+else
+    log "Python venv already exists"
 fi
 
 log "All dependencies ready"

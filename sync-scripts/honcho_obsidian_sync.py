@@ -19,55 +19,31 @@ Usage:
 """
 
 import argparse
-import json
 import re
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-try:
-    from honcho import Honcho
-except ImportError:
-    print("ERROR: honcho-ai not installed. Run: pip3 install honcho-ai")
-    sys.exit(1)
+from shared import (
+    VAULT_PATH, PEOPLE_DIR, MESSAGES_DIR,
+    HONCHO_BASE_URL, HONCHO_WORKSPACE,
+    get_honcho, load_json, save_json, sanitize_id, script_lock,
+    USER_NAME, USER_PEER_ID,
+)
+from config import BOT_UIDS, DEEP_RECONCILE_PEERS
 
-VAULT_PATH = Path.home() / "Documents" / "Obsidian Vault"
-PEOPLE_DIR = VAULT_PATH / "👥 People"
-MESSAGES_DIR = Path.home() / ".openclaw" / "workspace" / "slack_messages"
 SYNC_STATE_FILE = MESSAGES_DIR / ".honcho_obsidian_state.json"
 
-HONCHO_BASE_URL = "http://localhost:18790"
-HONCHO_WORKSPACE = "openclaw"
-
 CATEGORIES = {
-    "people": "👥 People",
-    "clients": "🏢 Clients",
-    "daily": "📋 Daily Notes",
-    "reference": "📚 Reference",
-    "projects": "🏃 Active Projects",
+    "people": "People",
+    "clients": "Clients",
+    "daily": "Daily Notes",
+    "reference": "Reference",
+    "projects": "Active Projects",
 }
 
-SKIP_DIRS = {"🤖 Jeff", "🗄️ Archive", "💡 Ideas"}
-
-
-def load_json(path: Path) -> dict:
-    if path.exists():
-        with open(path) as f:
-            return json.load(f)
-    return {}
-
-
-def save_json(path: Path, data: dict):
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-
-
-def sanitize_id(name: str) -> str:
-    """Convert a filename/name to a valid Honcho ID."""
-    pid = re.sub(r"[^A-Za-z0-9_-]+", "-", name).strip("-").lower()
-    pid = re.sub(r"-{2,}", "-", pid)
-    return pid or "unknown"
+SKIP_DIRS = {"Jeff", "Archive", "Ideas"}
 
 
 def scan_vault() -> list[dict]:
@@ -115,7 +91,7 @@ def extract_peer_card(content: str, person_name: str) -> list[str]:
     facts = []
     lines = content.split("\n")
 
-    # Extract role/title line (e.g., "**Role:** Co-founder, Marathon Data")
+    # Extract role/title line (e.g., "**Role:** Co-founder, Acme Corp")
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("**Role:**"):
@@ -145,7 +121,7 @@ def extract_peer_card(content: str, person_name: str) -> list[str]:
 
     # Relationship section -> single summary fact
     if "Relationship" in sections:
-        rel_text = " ".join(l.strip() for l in sections["Relationship"] if l.strip())
+        rel_text = " ".join(line.strip() for line in sections["Relationship"] if line.strip())
         if rel_text:
             # Take first 200 chars as relationship summary
             facts.append(f"Relationship: {rel_text[:200]}")
@@ -172,7 +148,7 @@ def extract_peer_card(content: str, person_name: str) -> list[str]:
     # Pattern sections -> first sentence as fact
     for section_name, section_lines in sections.items():
         if section_name.startswith("Pattern:"):
-            text = " ".join(l.strip() for l in section_lines if l.strip())
+            text = " ".join(line.strip() for line in section_lines if line.strip())
             if text:
                 # First sentence
                 first_sent = text.split(". ")[0] + "."
@@ -186,12 +162,14 @@ def extract_peer_card(content: str, person_name: str) -> list[str]:
 # Forward sync: Obsidian -> Honcho
 # ---------------------------------------------------------------------------
 
-# Module-level cache for card facts we set (peer_id -> set of fact strings)
-_card_facts_cache: dict[str, set] = {}
+def sync_people(honcho, files: list[dict], author_peer, dry_run: bool = False,
+                card_facts_cache: dict[str, set] | None = None):
+    """Sync people dossiers: create peer + set peer card + session per person.
 
-
-def sync_people(honcho, files: list[dict], author_peer, dry_run: bool = False):
-    """Sync people dossiers: create peer + set peer card + session per person."""
+    Returns (count, card_facts_cache) so the caller can persist the cache.
+    """
+    if card_facts_cache is None:
+        card_facts_cache = {}
     count = 0
     for f in files:
         name = f["name"]
@@ -218,9 +196,7 @@ def sync_people(honcho, files: list[dict], author_peer, dry_run: bool = False):
             try:
                 peer.set_card(card_facts)
                 # Save our card facts in state so reverse sync can exclude them
-                state_key = f"_card_facts_{peer_id}"
-                # Will be saved to state file later in main()
-                _card_facts_cache[peer_id] = set(card_facts)
+                card_facts_cache[peer_id] = set(card_facts)
                 print(f"  [people] {name}: set {len(card_facts)} card facts")
             except Exception as e:
                 print(f"  [people] {name}: card error: {e}")
@@ -246,7 +222,7 @@ def sync_people(honcho, files: list[dict], author_peer, dry_run: bool = False):
         print(f"  [people] {name}: synced")
         count += 1
         time.sleep(0.3)
-    return count
+    return count, card_facts_cache
 
 
 def sync_clients(honcho, files: list[dict], author_peer, dry_run: bool = False):
@@ -396,8 +372,8 @@ def detect_conflict(fact: str, dossier_content: str) -> bool:
 
     Heuristic: if the fact shares significant keyword overlap with an existing
     dossier line but wasn't caught by substring matching, it's likely an update
-    or contradiction (e.g., "Preston now supports eng cuts" vs dossier's
-    "Preston has brought up cutting eng multiple times").
+    or contradiction (e.g., "Alex now supports budget cuts" vs dossier's
+    "Alex has pushed back on budget cuts multiple times").
     """
     stop_words = {
         "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
@@ -571,16 +547,6 @@ def update_dossiers(honcho, state: dict, dry_run: bool = False, verbose: bool = 
 # Deep reconciliation: Honcho peer.chat() for key people (Friday weekly)
 # ---------------------------------------------------------------------------
 
-# Only run deep reconciliation for people where relationship dynamics shift fast
-DEEP_RECONCILE_PEERS = {
-    "tom-montgomery": "Tom Montgomery",
-    "preston-rutherford": "Preston Rutherford",
-    "ashley-spencer": "Ashley Spencer",
-    "phil": "Phil",
-    "theja-talla": "Theja Talla",
-    "chris-dolan": "Chris Dolan",
-}
-
 
 def deep_reconcile_dossiers(honcho, dry_run: bool = False, verbose: bool = False):
     """Weekly deep reconciliation using peer.chat() for key people.
@@ -673,42 +639,6 @@ def deep_reconcile_dossiers(honcho, dry_run: bool = False, verbose: bool = False
 # Bot peer management
 # ---------------------------------------------------------------------------
 
-BOT_PATTERNS = {
-    "Bot", "Agent", "Slack Agent", "Oracle", "Elementary",
-    "Airflow", "Marathon", "GitHub", "Linear", "Jira", "Sentry",
-    "GithubActionsSlackBot", "Google Calendar", "Google Drive",
-    "Grain", "Loom", "HubSpot", "Figma", "GIF Monger", "Canva",
-    "Notion", "Zapier", "Acquire.com", "Apollo.io", "Tactiq",
-    "Metabase", "PostHog", "Intercom Notifications", "Statuspage",
-    "Featurebase", "Customer.io", "Adobe Express", "Cohere",
-    "Asana", "Calendly", "Reclaim", "Gumloop", "Lindy", "ChatPRD",
-    "Cursor", "Claude Desktop", "Claude", "Novu", "Motion",
-    "OneDrive and SharePoint", "Manus", "Fathom", "Slackbot",
-    "OpenClaw", "dv-bot-test", "KS test", "TestUploader",
-    "elementary_reports_local",
-}
-
-BOT_UIDS = {
-    "U05R5F8CL66", "U05RSPHRANB", "U05TSNUD62H", "U05UM0LA31P",
-    "U05UZSV40GP", "U061FENT6LC", "U061LT2RJG4", "U0627HFQF7A",
-    "U063EQK072P", "U065J646Y8G", "U066SC5M6DD", "U06G4QE60HW",
-    "U06JVPGGDR8", "U06K93ETKBJ", "U06PTFS7AQZ", "U06UE3LBYM6",
-    "U074XK2KHA7", "U077AT77BHB", "U077DMYCBSP", "U07G04LRQ93",
-    "U07PB67HV7E", "U07RP4JHRM2", "U07T8D9EZGT", "U07T98XNYA3",
-    "U07U1JC7YAE", "U07UNN426QJ", "U07V1CZMJCR", "U084N1JAZFC",
-    "U087V78RTNU", "U088Y2U808K", "U08BD2VKL90", "U08F8AV3407",
-    "U08K1HLE872", "U08T1J0GEBH", "U09744MTSJK", "U09CKMKT1S8",
-    "U09J18CN6MQ", "U09P1HM2HJ8", "U09PVPWQRM4", "U09SGV6P695",
-    "U09V8V4DFGX", "U0A06MF6Q75", "U0A06MKP9EF", "U0A06MUS0RH",
-    "U0A0706BW4D", "U0A09KQA16Z", "U0A09KUSN0M", "U0A0ACGJVA6",
-    "U0A0CKX2REG", "U0A0E0BUNRJ", "U0A0GLME78C", "U0A14N4A64Q",
-    "U0A17C6949W", "U0A17D6SA6L", "U0ABUQG4MKM", "U0ACSP1DM6E",
-    "U0ADQA0KR1P", "U0AK9KHKYK1", "U0AP6CCS6F7", "U0APV7TV5M5",
-    "U0529QJ71A8", "U0529QZA65A", "U0574RW9SRH", "U058HC31EQJ",
-    "U087R1USW56", "U093H7DB27R", "U09SC9G3VMM", "U0A9F049U58",
-    "USLACKBOT",
-}
-
 
 def disable_bot_observation(honcho, verbose: bool = False):
     """Set observe_me=false on known bot peers to save reasoning compute."""
@@ -746,96 +676,102 @@ def main():
     parser.add_argument("--workspace", default=HONCHO_WORKSPACE)
     args = parser.parse_args()
 
-    if not VAULT_PATH.is_dir():
-        print(f"ERROR: Vault not found at {VAULT_PATH}")
-        sys.exit(1)
+    with script_lock("honcho_obsidian_sync"):
+        if not VAULT_PATH.is_dir():
+            print(f"ERROR: Vault not found at {VAULT_PATH}")
+            sys.exit(1)
 
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting Honcho Obsidian sync...")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting Honcho Obsidian sync...")
 
-    # Connect to Honcho (needed for both directions)
-    honcho = Honcho(base_url=args.base_url, workspace_id=args.workspace)
+        # Connect to Honcho (needed for both directions)
+        honcho = get_honcho(args.base_url, args.workspace)
 
-    # Disable bot observation if requested
-    if args.disable_bots:
-        disable_bot_observation(honcho, args.verbose)
+        # Disable bot observation if requested
+        if args.disable_bots:
+            disable_bot_observation(honcho, args.verbose)
 
-    # --- Forward sync: Obsidian -> Honcho ---
-    if not args.skip_forward:
-        state = {} if args.reset else load_json(SYNC_STATE_FILE)
-        if args.reset:
-            print("  Reset: re-syncing all files")
+        # --- Forward sync: Obsidian -> Honcho ---
+        if not args.skip_forward:
+            state = {} if args.reset else load_json(SYNC_STATE_FILE)
+            if args.reset:
+                print("  Reset: re-syncing all files")
 
-        all_files = scan_vault()
-        changed = get_changed_files(all_files, state)
+            all_files = scan_vault()
+            changed = get_changed_files(all_files, state)
 
-        if changed:
-            print(f"Found {len(changed)} changed files (of {len(all_files)} total)")
+            if changed:
+                print(f"Found {len(changed)} changed files (of {len(all_files)} total)")
 
-            by_cat = {}
-            for f in changed:
-                by_cat.setdefault(f["category"], []).append(f)
-
-            if args.dry_run:
-                for cat, files in by_cat.items():
-                    for f in files:
-                        content = read_file(f["path"])
-                        card_note = ""
-                        if cat == "people":
-                            facts = extract_peer_card(content, f["name"])
-                            card_note = f", {len(facts)} card facts"
-                        print(f"  [{cat}] {f['name']} ({len(content)} chars{card_note})")
-                print(f"[DRY RUN] Would sync {len(changed)} files to Honcho.")
-            else:
-                author_peer = honcho.peer("james-kenaley", metadata={
-                    "display_name": "James Kenaley",
-                    "source": "obsidian",
-                    "role": "vault_owner",
-                })
-
-                total = 0
-                if "people" in by_cat:
-                    total += sync_people(honcho, by_cat["people"], author_peer)
-                if "clients" in by_cat:
-                    total += sync_clients(honcho, by_cat["clients"], author_peer)
-                for cat in ("daily", "reference", "projects"):
-                    if cat in by_cat:
-                        total += sync_documents(honcho, by_cat[cat], cat, author_peer)
-
+                by_cat = {}
                 for f in changed:
-                    key = str(f["path"])
-                    state[key] = {
-                        "mtime": f["mtime"],
-                        "last_synced": time.time(),
-                        "category": f["category"],
-                    }
-                # Persist card facts we set so reverse sync can filter them
-                for peer_id, facts in _card_facts_cache.items():
-                    state[f"_card_{peer_id}"] = list(facts)
-                save_json(SYNC_STATE_FILE, state)
-                print(f"Forward sync: {total} files synced to Honcho.")
-        else:
-            print(f"No changed files (scanned {len(all_files)} total).")
+                    by_cat.setdefault(f["category"], []).append(f)
 
-    # --- Reverse sync: Honcho -> Obsidian dossiers ---
-    if args.update_dossiers:
-        print("\nReverse sync: checking Honcho for new insights...")
-        reverse_state = load_json(SYNC_STATE_FILE)
-        updated = update_dossiers(honcho, reverse_state, dry_run=args.dry_run, verbose=args.verbose)
-        if updated:
-            print(f"Reverse sync: {updated} dossiers updated from Honcho.")
-        else:
-            print("Reverse sync: no new insights to add.")
+                if args.dry_run:
+                    for cat, files in by_cat.items():
+                        for f in files:
+                            content = read_file(f["path"])
+                            card_note = ""
+                            if cat == "people":
+                                facts = extract_peer_card(content, f["name"])
+                                card_note = f", {len(facts)} card facts"
+                            print(f"  [{cat}] {f['name']} ({len(content)} chars{card_note})")
+                    print(f"[DRY RUN] Would sync {len(changed)} files to Honcho.")
+                else:
+                    author_peer = honcho.peer(USER_PEER_ID, metadata={
+                        "display_name": USER_NAME,
+                        "source": "obsidian",
+                        "role": "vault_owner",
+                    })
 
-    # --- Deep reconciliation: peer.chat() for key people (weekly/Friday) ---
-    if args.deep_reconcile:
-        print("\nDeep reconciliation: querying Honcho for key people...")
-        reconciled = deep_reconcile_dossiers(honcho, dry_run=args.dry_run, verbose=args.verbose)
-        if reconciled:
-            print(f"Deep reconciliation: {reconciled} dossiers updated.")
-        else:
-            print("Deep reconciliation: no changes found.")
+                    total = 0
+                    card_facts_cache = {}
+                    if "people" in by_cat:
+                        people_count, card_facts_cache = sync_people(
+                            honcho, by_cat["people"], author_peer,
+                            card_facts_cache=card_facts_cache,
+                        )
+                        total += people_count
+                    if "clients" in by_cat:
+                        total += sync_clients(honcho, by_cat["clients"], author_peer)
+                    for cat in ("daily", "reference", "projects"):
+                        if cat in by_cat:
+                            total += sync_documents(honcho, by_cat[cat], cat, author_peer)
 
-    print("Done.")
+                    for f in changed:
+                        key = str(f["path"])
+                        state[key] = {
+                            "mtime": f["mtime"],
+                            "last_synced": time.time(),
+                            "category": f["category"],
+                        }
+                    # Persist card facts we set so reverse sync can filter them
+                    for peer_id, facts in card_facts_cache.items():
+                        state[f"_card_{peer_id}"] = list(facts)
+                    save_json(SYNC_STATE_FILE, state)
+                    print(f"Forward sync: {total} files synced to Honcho.")
+            else:
+                print(f"No changed files (scanned {len(all_files)} total).")
+
+        # --- Reverse sync: Honcho -> Obsidian dossiers ---
+        if args.update_dossiers:
+            print("\nReverse sync: checking Honcho for new insights...")
+            reverse_state = load_json(SYNC_STATE_FILE)
+            updated = update_dossiers(honcho, reverse_state, dry_run=args.dry_run, verbose=args.verbose)
+            if updated:
+                print(f"Reverse sync: {updated} dossiers updated from Honcho.")
+            else:
+                print("Reverse sync: no new insights to add.")
+
+        # --- Deep reconciliation: peer.chat() for key people (weekly/Friday) ---
+        if args.deep_reconcile:
+            print("\nDeep reconciliation: querying Honcho for key people...")
+            reconciled = deep_reconcile_dossiers(honcho, dry_run=args.dry_run, verbose=args.verbose)
+            if reconciled:
+                print(f"Deep reconciliation: {reconciled} dossiers updated.")
+            else:
+                print("Deep reconciliation: no changes found.")
+
+        print("Done.")
 
 
 if __name__ == "__main__":

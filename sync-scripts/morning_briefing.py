@@ -5,30 +5,33 @@ Pulls calendar, PRs, Linear, and Slack highlights.
 Outputs a plain-text summary for Jeff to deliver via Slack DM.
 """
 
+import shutil
 import subprocess
 import json
 import os
-import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
 
+from shared import WORKSPACE, USER_FIRST_NAME, USER_SLACK_ID
+
 TODAY = datetime.now().strftime("%A, %B %-d")
-WORKSPACE = Path.home() / ".openclaw/workspace"
 SLACK_STORE = WORKSPACE / "slack_messages"
 LINEAR_API_KEY = os.environ.get("LINEAR_API_KEY", "")
-SLACK_USER_ID = os.environ.get("SLACK_USER_ID", "")
 
 
 def run(cmd, **kwargs):
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, **kwargs)
+    if isinstance(cmd, str):
+        import shlex
+        cmd = shlex.split(cmd)
+    result = subprocess.run(cmd, capture_output=True, text=True, **kwargs)
     return result.stdout.strip()
 
 
 # ── 1. Calendar ──────────────────────────────────────────────────────────────
 def get_calendar():
     try:
-        raw = run("khal list today today --format '{title} {start-time}-{end-time} {location}' 2>/dev/null")
+        raw = run(["khal", "list", "today", "today", "--format", "{title} {start-time}-{end-time} {location}"], stderr=subprocess.DEVNULL)
         if not raw or "No events" in raw:
             return []
         events = []
@@ -45,9 +48,10 @@ def get_calendar():
 def get_prs():
     try:
         raw = run(
-            "cd $HOME/Projects/monorepo && "
-            "gh pr list --author '@me' --json number,title,reviewDecision,statusCheckRollup,url "
-            "--jq '.[] | {number, title, reviewDecision, url, checks: (.statusCheckRollup // [] | map(select(.conclusion == \"FAILURE\")) | length)}'"
+            ["gh", "pr", "list", "--author", "@me",
+             "--json", "number,title,reviewDecision,statusCheckRollup,url",
+             "--jq", '.[] | {number, title, reviewDecision, url, checks: (.statusCheckRollup // [] | map(select(.conclusion == "FAILURE")) | length)}'],
+            cwd=str(Path.home() / "Projects" / "monorepo"),
         )
         if not raw:
             return []
@@ -98,11 +102,11 @@ def get_linear():
 
 # ── 4. Slack highlights (from local store) ────────────────────────────────────
 def get_slack_highlights():
-    """Find messages mentioning James from the last 18 hours that look actionable."""
+    """Find messages mentioning the user from the last 18 hours that look actionable."""
     if not SLACK_STORE.exists():
         return []
 
-    cutoff = datetime.now() - timedelta(hours=18)
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(hours=18)
     mentions = []
     action_keywords = re.compile(
         r'\b(can you|could you|please|urgent|asap|blocked|need you|waiting on you|lmk|let me know|your thoughts|thoughts\?)\b',
@@ -116,15 +120,15 @@ def get_slack_highlights():
                     try:
                         msg = json.loads(line)
                         ts = float(msg.get("ts", 0))
-                        if datetime.fromtimestamp(ts) < cutoff:
+                        if datetime.fromtimestamp(ts, tz=timezone.utc) < cutoff:
                             continue
                         text = msg.get("text", "")
                         user = msg.get("user", "")
-                        # Skip James's own messages
-                        if user == JAMES_SLACK_ID:
+                        # Skip user's own messages
+                        if user == USER_SLACK_ID:
                             continue
-                        # Include if mentioning James or has action keywords
-                        if JAMES_SLACK_ID in text or action_keywords.search(text):
+                        # Include if mentioning user or has action keywords
+                        if USER_SLACK_ID in text or action_keywords.search(text):
                             channel = msg.get("channel_name", f.stem)
                             mentions.append({
                                 "channel": channel,
@@ -151,7 +155,7 @@ def get_slack_highlights():
 # ── Assemble briefing ─────────────────────────────────────────────────────────
 def main():
     sections = []
-    sections.append(f"*Good morning, James. Here's your {TODAY} briefing.*")
+    sections.append(f"*Good morning, {USER_FIRST_NAME}. Here's your {TODAY} briefing.*")
 
     # Calendar
     events = get_calendar()
@@ -162,38 +166,34 @@ def main():
     else:
         sections.append("\n*📅 Calendar:* Nothing scheduled today.")
 
-    # PRs
-    prs = get_prs()
-    if prs:
-        needs_attention = [p for p in prs if p.get("reviewDecision") in ("CHANGES_REQUESTED",) or p.get("checks", 0) > 0]
-        in_review = [p for p in prs if p.get("reviewDecision") == "REVIEW_REQUIRED"]
-        approved = [p for p in prs if p.get("reviewDecision") == "APPROVED"]
+    # PRs (only if gh CLI is available)
+    if shutil.which("gh"):
+        prs = get_prs()
+        if prs:
+            needs_attention = [p for p in prs if p.get("reviewDecision") in ("CHANGES_REQUESTED",) or p.get("checks", 0) > 0]
+            in_review = [p for p in prs if p.get("reviewDecision") == "REVIEW_REQUIRED"]
+            approved = [p for p in prs if p.get("reviewDecision") == "APPROVED"]
 
-        sections.append("\n*🔀 Open PRs:*")
-        if needs_attention:
-            for p in needs_attention:
-                tag = "⚠️ changes requested" if p.get("reviewDecision") == "CHANGES_REQUESTED" else "❌ CI failing"
-                sections.append(f"  • #{p['number']} {p['title']} — {tag}")
-        if in_review:
-            for p in in_review:
-                sections.append(f"  • #{p['number']} {p['title']} — awaiting review")
-        if approved:
-            for p in approved:
-                sections.append(f"  • #{p['number']} {p['title']} — approved, ready to merge")
-        if not prs:
-            sections.append("  No open PRs.")
-    else:
-        sections.append("\n*🔀 PRs:* None open.")
+            sections.append("\n*🔀 Open PRs:*")
+            if needs_attention:
+                for p in needs_attention:
+                    tag = "⚠️ changes requested" if p.get("reviewDecision") == "CHANGES_REQUESTED" else "❌ CI failing"
+                    sections.append(f"  • #{p['number']} {p['title']} — {tag}")
+            if in_review:
+                for p in in_review:
+                    sections.append(f"  • #{p['number']} {p['title']} — awaiting review")
+            if approved:
+                for p in approved:
+                    sections.append(f"  • #{p['number']} {p['title']} — approved, ready to merge")
 
-    # Linear
-    tickets = get_linear()
-    if tickets:
-        sections.append("\n*📋 Linear (your tickets):*")
-        for t in tickets[:6]:
-            state = t.get("state", {}).get("name", "")
-            sections.append(f"  • {t['identifier']} {t['title']} ({state})")
-    else:
-        sections.append("\n*📋 Linear:* No active tickets assigned to you.")
+    # Linear (only if API key is configured)
+    if LINEAR_API_KEY:
+        tickets = get_linear()
+        if tickets:
+            sections.append("\n*📋 Linear (your tickets):*")
+            for t in tickets[:6]:
+                state = t.get("state", {}).get("name", "")
+                sections.append(f"  • {t['identifier']} {t['title']} ({state})")
 
     # Slack highlights
     highlights = get_slack_highlights()

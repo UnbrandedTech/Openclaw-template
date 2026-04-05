@@ -5,8 +5,12 @@ echo "Honcho setup options:"
 echo "  1. Cloud Honcho (honcho.dev, easiest)"
 echo "  2. Self-hosted (PostgreSQL + Ollama, more control)"
 echo ""
-ask "Which option? (1/2, default: 1)"
-HONCHO_OPTION="${REPLY:-1}"
+if [ "${HONCHO_SELF_HOSTED:-}" = "true" ]; then
+    HONCHO_OPTION="2"
+else
+    HONCHO_OPTION="1"
+    log "Using Cloud Honcho (default). Set HONCHO_SELF_HOSTED=true to self-host."
+fi
 
 if [ "$HONCHO_OPTION" = "2" ]; then
     # PostgreSQL
@@ -51,5 +55,5 @@ else
 fi
 
 # Install Python client
-pip3 install --break-system-packages honcho-ai 2>/dev/null || pip3 install honcho-ai
+"$HOME/.openclaw/venv/bin/pip" install honcho-ai
 log "Honcho Python client installed"
