@@ -1107,7 +1107,7 @@ if [ "$SYNC_NOW" = true ]; then
 
     wizard_spin "Loading Slack messages" "$VENV_PYTHON" "$WORKSPACE/scripts/honcho_slack_sync.py" || warn "Honcho Slack sync had errors"
 
-    wizard_spin "Loading transcripts, calendar, and GitHub data" "$VENV_PYTHON" "$WORKSPACE/scripts/load_to_honcho.py" --all || warn "Honcho data load had errors"
+    wizard_spin "Loading transcripts, calendar, and GitHub data" "$VENV_PYTHON" "$WORKSPACE/scripts/load_to_honcho.py" || warn "Honcho data load had errors"
 
     # ── Step 4: LLM priority analysis ────────────────────────────────
     step "Step 4/5: Analyzing priorities"
@@ -1142,7 +1142,7 @@ else
     warn "  $VENV_PYTHON ~/.openclaw/workspace/scripts/sync_calendar.py --days 30"
     warn "  $VENV_PYTHON ~/.openclaw/workspace/scripts/discover_workspace.py --force"
     warn "  $VENV_PYTHON ~/.openclaw/workspace/scripts/honcho_slack_sync.py"
-    warn "  $VENV_PYTHON ~/.openclaw/workspace/scripts/load_to_honcho.py --all"
+    warn "  $VENV_PYTHON ~/.openclaw/workspace/scripts/load_to_honcho.py"
     warn "  $VENV_PYTHON ~/.openclaw/workspace/scripts/analyze_priorities.py"
     warn "  $VENV_PYTHON ~/.openclaw/workspace/scripts/generate_initial_dossiers.py --type all"
 fi

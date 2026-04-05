@@ -72,6 +72,14 @@ if [ "$EMAIL_PROVIDER" = "google" ]; then
             fi
         else
             log "gogcli already authenticated"
+            # Ensure GOG_ACCOUNT is set even if auth already exists
+            if [ ! -f "$WORKSPACE/.google_env" ]; then
+                GOG_ACCT=$(gog auth list 2>/dev/null | head -1 | awk '{print $1}')
+                if [ -n "$GOG_ACCT" ]; then
+                    echo "GOG_ACCOUNT=$GOG_ACCT" >> "$WORKSPACE/.google_env"
+                    log "Set GOG_ACCOUNT=$GOG_ACCT"
+                fi
+            fi
         fi
     else
         if ! command -v gog &>/dev/null; then
