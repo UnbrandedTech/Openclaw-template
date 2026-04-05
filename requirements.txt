@@ -1,7 +1,7 @@
 # Core sync script dependencies
 # Install into the venv: ~/.openclaw/venv/bin/pip install -r requirements.txt
 slack-sdk>=3.33.0,<4.0
-honcho-ai>=0.1.0,<1.0
+honcho-ai>=0.1.0,<3.0
 
 # Google Workspace (gmail_standup_sync.py)
 google-auth>=2.30.0,<3.0
