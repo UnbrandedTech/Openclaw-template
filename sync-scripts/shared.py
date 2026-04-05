@@ -350,7 +350,7 @@ def _call_vertex(profiles: dict, model_name: str, prompt: str, max_tokens: int) 
             f"/locations/{region}/publishers/google/models/{model_name}:generateContent"
         )
         body = json.dumps({
-            "contents": [{"parts": [{"text": prompt}]}],
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {"maxOutputTokens": max_tokens},
         }).encode()
 

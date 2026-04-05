@@ -709,7 +709,7 @@ if [ "$AI_PROVIDER" = "vertex" ]; then
             -X POST "$FLASH_URL" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"contents":[{"parts":[{"text":"hi"}]}],"generationConfig":{"maxOutputTokens":1}}' \
+            -d '{"contents":[{"role":"user","parts":[{"text":"hi"}]}],"generationConfig":{"maxOutputTokens":1}}' \
             --connect-timeout 10 2>/dev/null)
         if [ "$FLASH_RESULT" = "200" ]; then
             log "Gemini Flash OK"
