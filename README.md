@@ -48,7 +48,7 @@ Then it sets up recurring cron jobs so the agent keeps everything current.
 | Phase | What happens |
 |-------|-------------|
 | 1-4 | Install dependencies, OpenClaw, workspace files, sync scripts |
-| 5-6 | Configure Honcho memory system + Slack integration |
+| 5-6 | Configure Honcho memory system + Slack integration + keychain opt-in |
 | 7-8 | Choose AI provider + authenticate, email & calendar tool setup (Google/IMAP/CalDAV) |
 | 9 | Create Obsidian vault structure |
 | 10 | Personalization (name, email, timezone auto-detected, GitHub opt-in, services-biz flag) |
@@ -104,7 +104,7 @@ scripts/                          # One-time setup scripts
   setup_crons.sh                  # Register cron jobs with OpenClaw
 
 sync-scripts/                     # Python scripts (run on cron + during setup)
-  shared.py                       # Shared utilities, path constants, user config, call_llm()
+  shared.py                       # Shared utilities, path constants, user config, call_llm(), get_secret()
   config.py                       # Auto-discovered config (bots, channels, people)
   slack_sync.py                   # Slack → local JSONL
   slack_todo_scan.py              # Scan messages for action items
@@ -133,6 +133,19 @@ templates/                        # Config templates
 workspace/                        # Agent identity files → ~/.openclaw/workspace/
   AGENTS.md, SOUL.md, USER.md, IDENTITY.md, HEARTBEAT.md, TOOLS.md
 ```
+
+## Security
+
+### Credential Storage
+
+During setup, you can choose to store API keys and tokens in your system keychain instead of plaintext `.env` files:
+
+- **macOS**: Uses Keychain Access via the `security` CLI
+- **Linux**: Uses GNOME Keyring / KDE Wallet via `secret-tool` (install `libsecret-tools` on Debian/Ubuntu or `libsecret` on Fedora/Arch)
+
+If keychain tools are not available, credentials fall back to `chmod 600` files in `~/.openclaw/workspace/`.
+
+All sync scripts use `get_secret()` from `shared.py`, which checks the keychain first, then environment variables, then `.env` files.
 
 ## Customization
 

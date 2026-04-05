@@ -8,16 +8,15 @@ Outputs a plain-text summary for Jeff to deliver via Slack DM.
 import shutil
 import subprocess
 import json
-import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
 
-from shared import WORKSPACE, USER_FIRST_NAME, USER_SLACK_ID
+from shared import WORKSPACE, USER_FIRST_NAME, USER_SLACK_ID, get_secret
 
 TODAY = datetime.now().strftime("%A, %B %-d")
 SLACK_STORE = WORKSPACE / "slack_messages"
-LINEAR_API_KEY = os.environ.get("LINEAR_API_KEY", "")
+LINEAR_API_KEY = get_secret("LINEAR_API_KEY")
 
 
 def run(cmd, **kwargs):

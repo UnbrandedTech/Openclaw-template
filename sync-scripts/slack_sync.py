@@ -9,7 +9,6 @@ Retention: deletes messages older than 14 days.
 Usage: python3 slack_sync.py [--token xoxp-...] [--hours 24] [--verbose] [--skip-threads]
 """
 
-import os
 import sys
 import json
 import time
@@ -17,7 +16,7 @@ import argparse
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from shared import MESSAGES_DIR, load_json, save_json, atomic_write_text, script_lock
+from shared import MESSAGES_DIR, load_json, save_json, atomic_write_text, script_lock, get_secret
 from config import PRIORITY_CHANNELS, PRIORITY_DM_USERS
 
 try:
@@ -33,7 +32,10 @@ PRUNE_INTERVAL_HOURS = 24
 
 
 def get_token():
-    """Try to get user token from openclaw config file directly."""
+    """Try to get user token (keychain → env → openclaw.json)."""
+    token = get_secret("SLACK_USER_TOKEN")
+    if token:
+        return token
     try:
         config_path = Path.home() / ".openclaw" / "openclaw.json"
         with open(config_path) as f:
@@ -47,7 +49,7 @@ def get_token():
                             return val
     except Exception:
         pass
-    return os.environ.get("SLACK_USER_TOKEN", "")
+    return ""
 
 
 def load_state():
