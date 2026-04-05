@@ -1077,7 +1077,7 @@ if [ "$SYNC_NOW" = true ]; then
         echo ""
     fi
 
-    wizard_spin "Refreshing calendar" vdirsyncer sync 2>/dev/null || warn "Calendar sync had errors (vdirsyncer may need 'discover' first)"
+    wizard_spin "Refreshing calendar" "$HOME/.openclaw/venv/bin/vdirsyncer" sync || warn "Calendar sync had errors"
 
     wizard_spin "Syncing Slack messages (3 months)" "$VENV_PYTHON" "$WORKSPACE/scripts/slack_sync.py" --hours 2160 --skip-threads || warn "Slack sync had errors"
 

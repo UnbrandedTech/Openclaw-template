@@ -27,6 +27,23 @@ if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]; then
     ask "User token for sync scripts (xoxp-..., press Enter to skip):"
     SLACK_USER_TOKEN="$REPLY"
 
+    # Validate token prefixes
+    if [ -n "$SLACK_BOT_TOKEN" ] && [[ ! "$SLACK_BOT_TOKEN" == xoxb-* ]]; then
+        warn "Bot token should start with xoxb- (got: ${SLACK_BOT_TOKEN:0:5}...)"
+    fi
+    if [ -n "$SLACK_APP_TOKEN" ] && [[ ! "$SLACK_APP_TOKEN" == xapp-* ]]; then
+        warn "App token should start with xapp- (got: ${SLACK_APP_TOKEN:0:5}...)"
+    fi
+    if [ -n "$SLACK_USER_TOKEN" ] && [[ ! "$SLACK_USER_TOKEN" == xoxp-* ]]; then
+        warn "User token should start with xoxp- (you may have pasted the bot token again)"
+        warn "Sync scripts need a USER token (xoxp-) to read messages. Bot tokens (xoxb-) won't work."
+        ask "Continue anyway? (y/n)"
+        if [ "$REPLY" != "y" ] && [ "$REPLY" != "Y" ]; then
+            ask "User token (xoxp-...):"
+            SLACK_USER_TOKEN="$REPLY"
+        fi
+    fi
+
     # Save tokens (keychain or .slack_env file)
     store_secret "SLACK_BOT_TOKEN" "$SLACK_BOT_TOKEN"
     store_secret "SLACK_APP_TOKEN" "$SLACK_APP_TOKEN"

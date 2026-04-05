@@ -133,7 +133,7 @@ esac
 # ── 2. vdirsyncer + khal for calendar ──────────────────────────────
 
 if [ "$CALENDAR_PROVIDER" != "none" ]; then
-    "$HOME/.openclaw/venv/bin/pip" install vdirsyncer khal icalendar 2>/dev/null
+    "$HOME/.openclaw/venv/bin/pip" install vdirsyncer khal icalendar aiohttp-oauthlib 2>/dev/null
 
     if [ ! -f ~/.config/vdirsyncer/config ]; then
         mkdir -p ~/.config/vdirsyncer
@@ -217,9 +217,9 @@ VDIREOF
             log "vdirsyncer config created for CalDAV ($CALDAV_URL)"
         fi
 
-        warn "Run these to finish calendar setup:"
-        warn "  vdirsyncer discover calendars"
-        warn "  vdirsyncer sync"
+        log "Running initial calendar discovery (this may open a browser for OAuth)..."
+        "$HOME/.openclaw/venv/bin/vdirsyncer" discover calendars 2>&1 || warn "vdirsyncer discover had errors — run 'vdirsyncer discover calendars' manually"
+        "$HOME/.openclaw/venv/bin/vdirsyncer" sync 2>&1 || warn "vdirsyncer sync had errors"
     else
         log "vdirsyncer already configured"
     fi
