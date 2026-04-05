@@ -12,6 +12,11 @@ OPENCLAW_DIR="$HOME/.openclaw"
 WORKSPACE="$OPENCLAW_DIR/workspace"
 VENV_PYTHON="$HOME/.openclaw/venv/bin/python3"
 
+# ── Setup log file ────────────────────────────────────────────────
+mkdir -p "$OPENCLAW_DIR"
+SETUP_LOG="$OPENCLAW_DIR/setup.log"
+echo "=== OpenClaw setup started $(date -Iseconds) ===" >> "$SETUP_LOG"
+
 # ── OS detection ────────────────────────────────────────────────────
 OS="$(uname -s)"
 case "$OS" in
@@ -61,15 +66,15 @@ CURRENT_PHASE=0
 
 # Plain-mode UI (fallback)
 _log_plain()  { echo -e "${GREEN}[✓]${NC} $1"; }
-_warn_plain() { echo -e "${YELLOW}[!]${NC} $1"; }
-_err_plain()  { echo -e "${RED}[✗]${NC} $1"; }
+_warn_plain() { echo -e "${YELLOW}[!]${NC} $1"; echo "[$(date +%H:%M:%S)] WARN: $1" >> "$SETUP_LOG" 2>/dev/null; }
+_err_plain()  { echo -e "${RED}[✗]${NC} $1"; echo "[$(date +%H:%M:%S)] ERR:  $1" >> "$SETUP_LOG" 2>/dev/null; }
 _step_plain() { echo -e "\n${BLUE}━━━ $1 ━━━${NC}\n"; }
 _ask_plain()  { echo -e "${YELLOW}$1${NC}"; read -r REPLY; }
 
 # Gum-enhanced UI
 _log_gum()  { gum style --foreground 2 "✓ $1"; }
-_warn_gum() { gum style --foreground 3 "! $1"; }
-_err_gum()  { gum style --foreground 1 --bold "✗ $1"; }
+_warn_gum() { gum style --foreground 3 "! $1"; echo "[$(date +%H:%M:%S)] WARN: $1" >> "$SETUP_LOG" 2>/dev/null; }
+_err_gum()  { gum style --foreground 1 --bold "✗ $1"; echo "[$(date +%H:%M:%S)] ERR:  $1" >> "$SETUP_LOG" 2>/dev/null; }
 _step_gum() {
     echo ""
     gum style --border rounded --border-foreground 4 --padding "0 2" --bold \
@@ -136,12 +141,28 @@ wizard_input() {
 # Usage: wizard_spin "message" command arg1 arg2 ...
 wizard_spin() {
     local msg="$1"; shift
+    echo "[$(date +%H:%M:%S)] RUN: $msg — $*" >> "$SETUP_LOG"
     if [ "$HAS_GUM" = true ] && [ "$WIZARD" = true ]; then
-        gum spin --spinner dot --title "$msg" -- "$@"
+        if "$@" >> "$SETUP_LOG" 2>&1; then
+            gum style --foreground 2 "  ✓ $msg"
+            echo "[$(date +%H:%M:%S)] OK:  $msg" >> "$SETUP_LOG"
+            return 0
+        else
+            local code=$?
+            gum style --foreground 1 "  ✗ $msg (see ~/.openclaw/setup.log)"
+            echo "[$(date +%H:%M:%S)] FAIL($code): $msg" >> "$SETUP_LOG"
+            return $code
+        fi
     else
         echo -n "  $msg... "
-        "$@"
-        echo "done"
+        if "$@" >> "$SETUP_LOG" 2>&1; then
+            echo "done"
+            return 0
+        else
+            local code=$?
+            echo "FAILED (see ~/.openclaw/setup.log)"
+            return $code
+        fi
     fi
 }
 
@@ -1218,6 +1239,10 @@ if [ "$WIZARD" = true ]; then
     gum style "  ./setup.sh --from 10   # Redo personalization + sync"
     gum style "  ./setup.sh --from 11   # Re-run workspace sync only"
     echo ""
+    gum style --bold "Logs:"
+    echo ""
+    gum style "  Full setup log: ~/.openclaw/setup.log"
+    echo ""
 else
     echo "Next steps:"
     echo "  1. Edit ~/.openclaw/workspace/SOUL.md with your agent's personality"
@@ -1227,6 +1252,7 @@ else
     echo "  5. Say hello!"
     echo ""
     echo "To redo a step: ./setup.sh --from N (e.g., --from 7 for AI provider)"
+    echo "Full log: ~/.openclaw/setup.log"
     echo ""
 fi
 log "Done."
