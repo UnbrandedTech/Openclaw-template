@@ -27,14 +27,23 @@ if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ]; then
     ask "User token for sync scripts (xoxp-..., press Enter to skip):"
     SLACK_USER_TOKEN="$REPLY"
 
-    # Save to a local env file for the sync scripts
-    cat > "$WORKSPACE/.slack_env" << EOF
+    # Save tokens (keychain or .slack_env file)
+    store_secret "SLACK_BOT_TOKEN" "$SLACK_BOT_TOKEN"
+    store_secret "SLACK_APP_TOKEN" "$SLACK_APP_TOKEN"
+    if [ -n "$SLACK_USER_TOKEN" ]; then
+        store_secret "SLACK_USER_TOKEN" "$SLACK_USER_TOKEN"
+    fi
+
+    # Also write .slack_env for scripts that read it directly
+    if [ "$USE_KEYCHAIN" != true ]; then
+        cat > "$WORKSPACE/.slack_env" << EOF
 SLACK_BOT_TOKEN=$SLACK_BOT_TOKEN
 SLACK_APP_TOKEN=$SLACK_APP_TOKEN
 SLACK_USER_TOKEN=$SLACK_USER_TOKEN
 EOF
-    chmod 600 "$WORKSPACE/.slack_env"
-    log "Slack tokens saved to $WORKSPACE/.slack_env"
+        chmod 600 "$WORKSPACE/.slack_env"
+    fi
+    log "Slack tokens saved${USE_KEYCHAIN:+ to keychain}"
     warn "You still need to add these to openclaw.json under the Slack plugin config"
 else
     warn "Skipping Slack token setup. Add tokens to openclaw.json manually later."

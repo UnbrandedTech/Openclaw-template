@@ -27,7 +27,7 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-from shared import WORKSPACE, VAULT_PATH, save_json as _atomic_save_json, USER_NAME, script_lock, load_json
+from shared import WORKSPACE, VAULT_PATH, save_json as _atomic_save_json, USER_NAME, script_lock, load_json, get_secret
 
 EMAILS_DIR = WORKSPACE / "transcriptions"
 STATE_FILE = WORKSPACE / "memory/transcript-sync-state.json"
@@ -108,7 +108,7 @@ def _imap_connect() -> imaplib.IMAP4_SSL:
     server = _user_cfg.get("imap_server", "")
     port = int(_user_cfg.get("imap_port", 993))
     username = _user_cfg.get("imap_username", "")
-    password = os.environ.get("IMAP_PASSWORD", "")
+    password = get_secret("IMAP_PASSWORD")
 
     if not all([server, username, password]):
         print("ERROR: IMAP not configured.", file=sys.stderr)

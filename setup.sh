@@ -78,6 +78,28 @@ pkg_install() {
     fi
 }
 
+# Store a secret in system keychain or .env file
+# Usage: store_secret KEY VALUE
+store_secret() {
+    local key="$1" value="$2"
+    if [ "$USE_KEYCHAIN" = true ]; then
+        if [ "$PLATFORM" = "macos" ]; then
+            security add-generic-password -s openclaw -a "$key" -w "$value" -U 2>/dev/null && return 0
+        else
+            echo -n "$value" | secret-tool store --label "OpenClaw: $key" service openclaw key "$key" 2>/dev/null && return 0
+        fi
+        warn "Keychain store failed for $key, falling back to .env file"
+    fi
+    # Fallback: write to .env
+    mkdir -p "$WORKSPACE"
+    if grep -q "^${key}=" "$WORKSPACE/.env" 2>/dev/null; then
+        sedi "s|^${key}=.*|${key}=${value}|" "$WORKSPACE/.env"
+    else
+        echo "${key}=${value}" >> "$WORKSPACE/.env"
+    fi
+    chmod 600 "$WORKSPACE/.env"
+}
+
 # Cross-platform cask/GUI app install
 pkg_install_cask() {
     if [ "$PLATFORM" = "macos" ]; then
@@ -180,6 +202,41 @@ if [ "$SKIP_SLACK" = false ]; then
     source "$SCRIPT_DIR/scripts/setup_slack.sh"
 else
     warn "Skipping Slack setup"
+fi
+
+# ─── Keychain prompt ──────────────────────────────────────────────
+
+USE_KEYCHAIN=false
+KEYCHAIN_AVAILABLE=false
+
+if [ "$PLATFORM" = "macos" ] && command -v security &>/dev/null; then
+    KEYCHAIN_AVAILABLE=true
+elif [ "$PLATFORM" = "linux" ] && command -v secret-tool &>/dev/null; then
+    KEYCHAIN_AVAILABLE=true
+fi
+
+if [ "$KEYCHAIN_AVAILABLE" = true ]; then
+    echo ""
+    echo "Your API keys and tokens can be stored in the system keychain"
+    echo "instead of plaintext files on disk."
+    if [ "$PLATFORM" = "macos" ]; then
+        echo "  Backend: macOS Keychain (via 'security' CLI)"
+    else
+        echo "  Backend: GNOME Keyring / KDE Wallet (via 'secret-tool')"
+    fi
+    echo ""
+    ask "Store credentials in system keychain? (y/n, default y)"
+    if [ "$REPLY" != "n" ] && [ "$REPLY" != "N" ]; then
+        USE_KEYCHAIN=true
+        log "Keychain storage enabled"
+    else
+        warn "Credentials will be stored in plaintext .env files (chmod 600)"
+    fi
+else
+    if [ "$PLATFORM" = "linux" ]; then
+        warn "secret-tool not found. Install libsecret-tools (Debian/Ubuntu) or libsecret (Fedora/Arch) for keychain support."
+    fi
+    warn "Credentials will be stored in plaintext .env files (chmod 600)"
 fi
 
 # ─── Phase 7: AI Provider + Google Cloud ─────────────────────────
@@ -333,9 +390,7 @@ elif [ "$AI_PROVIDER" = "openai" ]; then
     # ── OpenAI ──────────────────────────────────────────────────
     ask "OpenAI API key (or Enter to set OPENAI_API_KEY env var later):"
     if [ -n "$REPLY" ]; then
-        mkdir -p "$WORKSPACE"
-        echo "OPENAI_API_KEY=$REPLY" >> "$WORKSPACE/.env"
-        chmod 600 "$WORKSPACE/.env"
+        store_secret "OPENAI_API_KEY" "$REPLY"
         export OPENAI_API_KEY="$REPLY"
 
         echo -n "  Testing OpenAI API... "
@@ -360,9 +415,7 @@ elif [ "$AI_PROVIDER" = "anthropic" ]; then
     # ── Anthropic ───────────────────────────────────────────────
     ask "Anthropic API key (or Enter to set ANTHROPIC_API_KEY env var later):"
     if [ -n "$REPLY" ]; then
-        mkdir -p "$WORKSPACE"
-        echo "ANTHROPIC_API_KEY=$REPLY" >> "$WORKSPACE/.env"
-        chmod 600 "$WORKSPACE/.env"
+        store_secret "ANTHROPIC_API_KEY" "$REPLY"
         export ANTHROPIC_API_KEY="$REPLY"
 
         echo -n "  Testing Anthropic API... "
@@ -605,7 +658,8 @@ cat > "$WORKSPACE/user.json" << USERJSON
   "imap_server": "${IMAP_SERVER:-}",
   "imap_port": ${IMAP_PORT:-993},
   "imap_username": "${IMAP_USERNAME:-}",
-  "calendar_provider": "${CALENDAR_PROVIDER:-google}"
+  "calendar_provider": "${CALENDAR_PROVIDER:-google}",
+  "keychain": $USE_KEYCHAIN
 }
 USERJSON
 log "Created user.json"

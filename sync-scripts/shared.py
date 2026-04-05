@@ -128,6 +128,126 @@ USER_COMPANY = _user_config.get("company", "")
 USER_PEER_ID = sanitize_id(USER_NAME) if USER_NAME else "owner"
 
 
+# ── System keychain integration ──────────────────────────────────────────────
+
+KEYCHAIN_SERVICE = "openclaw"
+KEYCHAIN_ENABLED = _user_config.get("keychain", False)
+
+_platform = sys.platform
+
+
+def _keychain_available() -> bool:
+    """Check if system keychain tools are available."""
+    if _platform == "darwin":
+        return _which("security") is not None
+    return _which("secret-tool") is not None
+
+
+def _which(cmd: str) -> str | None:
+    """Locate a command on PATH without importing shutil."""
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        p = os.path.join(d, cmd)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
+
+
+def _keychain_get(name: str) -> str | None:
+    """Read a secret from the system keychain. Returns None on failure."""
+    try:
+        if _platform == "darwin":
+            result = subprocess.run(
+                ["security", "find-generic-password",
+                 "-s", KEYCHAIN_SERVICE, "-a", name, "-w"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        else:
+            result = subprocess.run(
+                ["secret-tool", "lookup",
+                 "service", KEYCHAIN_SERVICE, "key", name],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return None
+
+
+def _keychain_set(name: str, value: str) -> bool:
+    """Store a secret in the system keychain. Returns True on success."""
+    try:
+        if _platform == "darwin":
+            # -U updates if the entry already exists
+            result = subprocess.run(
+                ["security", "add-generic-password",
+                 "-s", KEYCHAIN_SERVICE, "-a", name, "-w", value, "-U"],
+                capture_output=True, text=True, timeout=5,
+            )
+            return result.returncode == 0
+        else:
+            result = subprocess.run(
+                ["secret-tool", "store",
+                 "--label", f"OpenClaw: {name}",
+                 "service", KEYCHAIN_SERVICE, "key", name],
+                input=value, capture_output=True, text=True, timeout=5,
+            )
+            return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return False
+
+
+def _keychain_delete(name: str) -> bool:
+    """Remove a secret from the system keychain."""
+    try:
+        if _platform == "darwin":
+            result = subprocess.run(
+                ["security", "delete-generic-password",
+                 "-s", KEYCHAIN_SERVICE, "-a", name],
+                capture_output=True, text=True, timeout=5,
+            )
+            return result.returncode == 0
+        else:
+            result = subprocess.run(
+                ["secret-tool", "clear",
+                 "service", KEYCHAIN_SERVICE, "key", name],
+                capture_output=True, text=True, timeout=5,
+            )
+            return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return False
+
+
+def get_secret(name: str, fallback_env: str | None = None) -> str:
+    """Retrieve a secret, checking keychain first then environment/files.
+
+    Lookup order:
+      1. System keychain (if enabled and available)
+      2. Environment variable (name, or fallback_env if provided)
+      3. Empty string
+    """
+    if KEYCHAIN_ENABLED and _keychain_available():
+        val = _keychain_get(name)
+        if val:
+            return val
+    env_key = fallback_env or name
+    return os.environ.get(env_key, "")
+
+
+def set_secret(name: str, value: str) -> bool:
+    """Store a secret. Uses keychain if enabled, otherwise returns False.
+
+    Callers should fall back to writing .env files when this returns False.
+    """
+    if KEYCHAIN_ENABLED and _keychain_available():
+        return _keychain_set(name, value)
+    return False
+
+
 # ── .env loading ──────────────────────────────────────────────────────────────
 
 _env_file = WORKSPACE / ".env"
@@ -258,7 +378,7 @@ def _call_openai(profiles: dict, model_name: str, prompt: str, max_tokens: int) 
     """Call a model via OpenAI API (also works with compatible APIs)."""
     profile = profiles.get("openai:default", {})
     api_key_env = profile.get("api_key_env", "OPENAI_API_KEY")
-    api_key = os.environ.get(api_key_env, "")
+    api_key = get_secret(api_key_env)
     base_url = profile.get("base_url", "https://api.openai.com/v1")
 
     if not api_key:
@@ -294,7 +414,7 @@ def _call_anthropic(profiles: dict, model_name: str, prompt: str, max_tokens: in
     """Call a model via Anthropic API."""
     profile = profiles.get("anthropic:default", {})
     api_key_env = profile.get("api_key_env", "ANTHROPIC_API_KEY")
-    api_key = os.environ.get(api_key_env, "")
+    api_key = get_secret(api_key_env)
 
     if not api_key:
         print("ERROR: ANTHROPIC_API_KEY not set (or custom key from openclaw.json auth profile).", file=sys.stderr)

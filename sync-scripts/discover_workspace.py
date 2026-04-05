@@ -16,13 +16,12 @@ Usage:
 
 import argparse
 import json
-import os
 import time
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from shared import WORKSPACE, MESSAGES_DIR, save_json, load_json, USER_SLACK_ID, sanitize_id
+from shared import WORKSPACE, MESSAGES_DIR, save_json, load_json, USER_SLACK_ID, sanitize_id, get_secret
 
 try:
     from slack_sdk import WebClient
@@ -35,9 +34,9 @@ except ImportError:
 # ── Slack token resolution ──────────────────────────────────────────────────
 
 def get_token():
-    """Try to find a Slack user token."""
-    # Check env
-    token = os.environ.get("SLACK_USER_TOKEN", "")
+    """Try to find a Slack user token (keychain → env → .slack_env → openclaw.json)."""
+    # Check keychain and env via get_secret
+    token = get_secret("SLACK_USER_TOKEN")
     if token:
         return token
     # Check .slack_env

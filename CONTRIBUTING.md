@@ -57,7 +57,8 @@ pip install -r requirements.txt
 ## Security
 
 - **Never** commit credentials, tokens, or secrets
-- Use `.env` files for sensitive values (these are gitignored)
+- Use `store_secret()` (shell) or `get_secret()` / `set_secret()` (Python) for credential access — these check the system keychain first, then fall back to `.env` files
+- Do not read API keys or tokens directly via `os.environ.get()` — use `get_secret()` from `shared.py` instead
 - See [SECURITY.md](SECURITY.md) for reporting vulnerabilities
 
 ## Questions?

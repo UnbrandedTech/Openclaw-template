@@ -53,7 +53,7 @@ Step 5: Generate Dossiers (fast model)
 
 ### Shared Modules
 
-- **`shared.py`** — Path constants, user identity (from `user.json`), `call_llm()` (multi-provider LLM dispatch), Honcho client (`get_honcho()`), atomic writes (`save_json`), ID sanitization (`sanitize_id`), cron overlap prevention (`script_lock`). All scripts import from here.
+- **`shared.py`** — Path constants, user identity (from `user.json`), `call_llm()` (multi-provider LLM dispatch), `get_secret()`/`set_secret()` (keychain-first credential access), Honcho client (`get_honcho()`), atomic writes (`save_json`), ID sanitization (`sanitize_id`), cron overlap prevention (`script_lock`). All scripts import from here.
 - **`config.py`** — Loads auto-discovered config from workspace JSON files: `BOT_UIDS`, `EXCLUDE_CHANNELS` (from discovery), `TRACKED_PEOPLE`, `CLIENTS`, `PRIORITY_*` (from team.json).
 
 ### Sync Scripts
@@ -92,7 +92,7 @@ Model roles (`fast`, `reasoning`) are mapped to specific provider/model in `open
 
 | File | Location | Purpose |
 |------|----------|---------|
-| `user.json` | `~/.openclaw/workspace/` | User identity (name, email, Slack ID, timezone) |
+| `user.json` | `~/.openclaw/workspace/` | User identity (name, email, Slack ID, timezone, keychain preference) |
 | `team.json` | `~/.openclaw/workspace/` | Tracked people, clients, priority channels (LLM-generated) |
 | `discovered_bots.json` | `~/.openclaw/workspace/` | Auto-detected bot UIDs + display name patterns |
 | `discovered_channels.json` | `~/.openclaw/workspace/` | Auto-detected noise channels to exclude |
@@ -109,6 +109,7 @@ Model roles (`fast`, `reasoning`) are mapped to specific provider/model in `open
 - **vdirsyncer + khal** — Calendar sync (Google Calendar or CalDAV)
 - **gh** — GitHub CLI (optional)
 - **icalendar** — Python library for .ics calendar parsing
+- **secret-tool** — Linux keychain access via libsecret (optional, for encrypted credential storage)
 
 ## Conventions
 
@@ -119,6 +120,8 @@ Model roles (`fast`, `reasoning`) are mapped to specific provider/model in `open
 - No hardcoded model names — scripts use `call_llm(prompt, role="fast"|"reasoning")` which reads from `openclaw.json`.
 - All config auto-discovered during setup, editable afterward.
 - `sedi()` wrapper in setup.sh handles cross-platform `sed -i` (macOS needs `''` arg, Linux doesn't).
+- `store_secret()` in setup.sh stores credentials in system keychain or `.env` file based on `USE_KEYCHAIN`.
+- Secrets accessed via `get_secret(name)` from shared.py: checks keychain first, then env vars, then `.env` file. Controlled by `"keychain": true` in `user.json`.
 
 ## Environment Variables
 

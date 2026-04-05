@@ -99,19 +99,11 @@ elif [ "$EMAIL_PROVIDER" = "imap" ]; then
     ask "IMAP username (usually your email address):"
     IMAP_USERNAME="$REPLY"
 
-    ask "IMAP password or app password (stored in .env, not in config files):"
+    ask "IMAP password or app password:"
     if [ -n "$REPLY" ]; then
-        mkdir -p "$WORKSPACE"
-        # Append to .env, avoiding duplicates
-        if grep -q "^IMAP_PASSWORD=" "$WORKSPACE/.env" 2>/dev/null; then
-            sed -i "s|^IMAP_PASSWORD=.*|IMAP_PASSWORD=$REPLY|" "$WORKSPACE/.env" 2>/dev/null || \
-                sed -i '' "s|^IMAP_PASSWORD=.*|IMAP_PASSWORD=$REPLY|" "$WORKSPACE/.env"
-        else
-            echo "IMAP_PASSWORD=$REPLY" >> "$WORKSPACE/.env"
-        fi
-        chmod 600 "$WORKSPACE/.env"
+        store_secret "IMAP_PASSWORD" "$REPLY"
         export IMAP_PASSWORD="$REPLY"
-        log "IMAP password saved to .env"
+        log "IMAP password saved${USE_KEYCHAIN:+ to keychain}"
     else
         warn "Set IMAP_PASSWORD in ~/.openclaw/workspace/.env before running transcript sync."
     fi
@@ -191,21 +183,15 @@ VDIREOF
             ask "CalDAV username:"
             CALDAV_USER="$REPLY"
 
-            ask "CalDAV password (stored in .env, not in config files):"
+            ask "CalDAV password:"
             if [ -n "$REPLY" ]; then
-                if grep -q "^CALDAV_PASSWORD=" "$WORKSPACE/.env" 2>/dev/null; then
-                    sed -i "s|^CALDAV_PASSWORD=.*|CALDAV_PASSWORD=$REPLY|" "$WORKSPACE/.env" 2>/dev/null || \
-                        sed -i '' "s|^CALDAV_PASSWORD=.*|CALDAV_PASSWORD=$REPLY|" "$WORKSPACE/.env"
-                else
-                    echo "CALDAV_PASSWORD=$REPLY" >> "$WORKSPACE/.env"
-                fi
-                chmod 600 "$WORKSPACE/.env"
-            fi
+                store_secret "CALDAV_PASSWORD" "$REPLY"
 
-            # Write password file for vdirsyncer to read
-            CALDAV_PASS_FILE=~/.config/vdirsyncer/caldav_password
-            echo "$REPLY" > "$CALDAV_PASS_FILE"
-            chmod 600 "$CALDAV_PASS_FILE"
+                # vdirsyncer needs a password file regardless of keychain
+                CALDAV_PASS_FILE=~/.config/vdirsyncer/caldav_password
+                echo "$REPLY" > "$CALDAV_PASS_FILE"
+                chmod 600 "$CALDAV_PASS_FILE"
+            fi
 
             cat > ~/.config/vdirsyncer/config << VDIREOF
 [general]

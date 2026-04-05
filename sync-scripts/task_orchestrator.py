@@ -14,7 +14,6 @@ Commands:
   cleanup                          Remove stale completed tasks
 """
 
-import os
 import json
 import subprocess
 import argparse
@@ -22,14 +21,14 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from shared import WORKSPACE, save_json, load_json
+from shared import WORKSPACE, save_json, load_json, get_secret
 
 # Repo map loaded from team.json if available, empty otherwise
 _team = load_json(WORKSPACE / "team.json")
 REPO_MAP = _team.get("repo_map", {})
 
 STATE_FILE = WORKSPACE / "memory" / "active-tasks.json"
-LINEAR_TOKEN = os.environ.get("LINEAR_API_KEY", "")
+LINEAR_TOKEN = get_secret("LINEAR_API_KEY")
 OPENCLAW_BIN = shutil.which("openclaw") or "openclaw"
 CLAUDE_BIN = "claude"
 
