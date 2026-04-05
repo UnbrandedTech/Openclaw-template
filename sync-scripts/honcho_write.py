@@ -6,20 +6,20 @@ Push conclusions (learnings, decisions, context) directly into Honcho memory.
 This complements passive observation from conversations with active knowledge capture.
 
 Usage:
-  # Push a learning about James (owner)
-  python3 honcho_write.py "James decided to drop Tracksmith creative"
+  # Push a learning about the owner
+  python3 honcho_write.py "Decided to drop the Q3 campaign"
 
   # Push with domain tag
-  python3 honcho_write.py "Danger Coffee deal is $57-60K/mo" --domain business
+  python3 honcho_write.py "Acme deal is $57-60K/mo" --domain business
 
   # Push about a specific person
-  python3 honcho_write.py "Tom wants Friday agency debrief" --about tom-montgomery
+  python3 honcho_write.py "Sarah wants Friday debrief" --about sarah-jones
 
   # Push multiple learnings from stdin (one per line)
   echo -e "fact one\\nfact two" | python3 honcho_write.py --stdin
 
   # Search conclusions
-  python3 honcho_write.py --search "tracksmith"
+  python3 honcho_write.py --search "campaign"
 
   # Delete a conclusion by ID
   python3 honcho_write.py --delete obs-123
@@ -34,19 +34,9 @@ import sys
 import time
 from pathlib import Path
 
-try:
-    from honcho import Honcho
-except ImportError:
-    print("ERROR: honcho-ai not installed. Run: pip3 install honcho-ai")
-    sys.exit(1)
+from shared import HONCHO_BASE_URL, HONCHO_WORKSPACE, get_honcho, WORKSPACE
 
-HONCHO_BASE_URL = "http://localhost:18790"
-HONCHO_WORKSPACE = "openclaw"
-MEMORY_MD = Path.home() / ".openclaw" / "workspace" / "MEMORY.md"
-
-
-def get_honcho():
-    return Honcho(base_url=HONCHO_BASE_URL, workspace_id=HONCHO_WORKSPACE)
+MEMORY_MD = WORKSPACE / "MEMORY.md"
 
 
 def push_conclusions(honcho, contents: list[str], observer: str = "agent-main",
@@ -189,7 +179,7 @@ def main():
     parser.add_argument("--workspace", default=HONCHO_WORKSPACE)
     args = parser.parse_args()
 
-    honcho = Honcho(base_url=args.base_url, workspace_id=args.workspace)
+    honcho = get_honcho(args.base_url, args.workspace)
 
     if args.search:
         search_conclusions(honcho, args.search, args.observer, args.about)

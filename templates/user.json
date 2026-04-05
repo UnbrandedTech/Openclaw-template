@@ -1,0 +1,11 @@
+{
+  "name": "[YOUR NAME]",
+  "first_name": "[FIRST]",
+  "email": "[YOUR EMAIL]",
+  "timezone": "America/Denver",
+  "slack_user_id": "",
+  "name_keywords": [],
+  "title": "",
+  "company": "",
+  "monorepo_path": "$HOME/Projects/monorepo"
+}

@@ -1,28 +1,29 @@
 {
   "auth": {
     "profiles": {
-      "anthropic:default": {
-        "provider": "anthropic",
-        "mode": "token"
+      "vertex:default": {
+        "provider": "vertex",
+        "project_id": "YOUR_PROJECT_ID",
+        "region": "us-east5"
       }
     }
   },
   "agents": {
     "defaults": {
       "model": {
-        "primary": "anthropic/claude-sonnet-4-6"
+        "primary": "vertex/gemini-2.5-flash"
       }
     },
     "list": [
       {
         "id": "main",
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "vertex/gemini-2.5-flash",
         "heartbeat": {
           "enabled": true,
-          "intervalMs": 1800000
+          "intervalMs": 3600000
         }
       }
     ]
   },
-  "_comment": "This is a starting template. See https://docs.openclaw.ai for full config reference."
+  "_comment": "Uses Vertex AI (GCP). Run 'gcloud auth application-default login' to authenticate. Change region if Claude isn't available in us-east5 for your project."
 }

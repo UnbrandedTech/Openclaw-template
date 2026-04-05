@@ -19,39 +19,37 @@ import sys
 import json
 import subprocess
 import argparse
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-WORKSPACE = Path.home() / ".openclaw" / "workspace"
+from shared import WORKSPACE, save_json, load_json
+
+# Repo map loaded from team.json if available, empty otherwise
+_team = load_json(WORKSPACE / "team.json")
+REPO_MAP = _team.get("repo_map", {})
+
 STATE_FILE = WORKSPACE / "memory" / "active-tasks.json"
 LINEAR_TOKEN = os.environ.get("LINEAR_API_KEY", "")
-OPENCLAW_BIN = str(Path.home() / ".nvm/versions/node/v22.22.1/bin/openclaw")
+OPENCLAW_BIN = shutil.which("openclaw") or "openclaw"
 CLAUDE_BIN = "claude"
 
-REPO_MAP = {
-    "MD":     "$HOME/Projects/monorepo",
-    "PIPE":   "$HOME/Projects/pipeline",
-    "APP":    "$HOME/Projects/monorepo",
-    "SALE":   "$HOME/Projects/monorepo",
-    "CONX":   "$HOME/Projects/monorepo",
-}
-DEFAULT_REPO = "$HOME/Projects/monorepo"
-
-
 def load_state():
-    if STATE_FILE.exists():
-        return json.loads(STATE_FILE.read_text())
-    return {"tasks": {}, "completed": []}
+    state = load_json(STATE_FILE)
+    if "tasks" not in state:
+        state["tasks"] = {}
+    if "completed" not in state:
+        state["completed"] = []
+    return state
 
 
 def save_state(state):
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+    save_json(STATE_FILE, state)
 
 
 def get_repo(ticket_id):
     prefix = ticket_id.split("-")[0].upper()
-    return REPO_MAP.get(prefix, DEFAULT_REPO)
+    return REPO_MAP.get(prefix, "")
 
 
 def get_linear_ticket(ticket_id):
@@ -112,7 +110,7 @@ def cmd_launch(args, state):
         print(f"# Prompt: {prompt_path}")
         home = str(Path.home())
         nvm_init = f"export NVM_DIR={home}/.nvm && source {home}/.nvm/nvm.sh && nvm use 20 --silent 2>/dev/null"
-        print(f"\ncd {repo} && {nvm_init} && {CLAUDE_BIN} --permission-mode bypassPermissions --print \"$(cat {prompt_path})\"")
+        print(f"\ncd {repo} && {nvm_init} && {CLAUDE_BIN} --permission-mode acceptEdits --print \"$(cat {prompt_path})\"")
 
 
 def cmd_status(args, state):
@@ -169,7 +167,7 @@ def cmd_check_reviews(args, state):
     tasks = state.get("tasks", {})
     triggered = 0
     for ticket_id, task in list(tasks.items()):
-        repo = task.get("repo", DEFAULT_REPO)
+        repo = task.get("repo", "")
 
         # Find PR if not tracked yet
         if not task.get("pr_number"):
@@ -208,7 +206,7 @@ def cmd_check_reviews(args, state):
 
             if new:
                 print(f"  {ticket_id}: {len(new)} new review comment(s) — print address-review command")
-                print(f"  cd {repo} && {CLAUDE_BIN} --permission-mode bypassPermissions --print \"/address-review {pr_num}\\n\\nWhen done: {OPENCLAW_BIN} system event --text 'Review addressed: {ticket_id} PR#{pr_num}' --mode now\"")
+                print(f"  cd {repo} && {CLAUDE_BIN} --permission-mode acceptEdits --print \"/address-review {pr_num}\\n\\nWhen done: {OPENCLAW_BIN} system event --text 'Review addressed: {ticket_id} PR#{pr_num}' --mode now\"")
                 triggered += 1
 
         except Exception as e:

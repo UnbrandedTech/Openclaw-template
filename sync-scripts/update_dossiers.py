@@ -6,60 +6,30 @@ Queries Honcho for each tracked person and writes a JSON bundle to stdout
 (or a temp file). The calling agent does the LLM merge step.
 
 Usage:
-  python3 update_dossiers.py [--person "Tom Montgomery"] [--priority high]
+  python3 update_dossiers.py [--person "Jane Doe"] [--priority high]
   python3 update_dossiers.py --list   # Just list tracked people
 """
 
 import argparse
 import json
-import re
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
-try:
-    from honcho import Honcho
-except ImportError:
-    print("ERROR: honcho-ai not installed.", file=sys.stderr)
-    sys.exit(1)
-
-VAULT_PATH = Path.home() / "Documents" / "Obsidian Vault"
-PEOPLE_DIR = VAULT_PATH / "👥 People"
-
-HONCHO_BASE_URL = "http://localhost:18790"
-HONCHO_WORKSPACE = "openclaw"
-
-TRACKED_PEOPLE = {
-    "Tom Montgomery":      {"type": "internal", "peer_id": "tom-montgomery",      "priority": "high"},
-    "Preston Rutherford":  {"type": "internal", "peer_id": "preston-rutherford",  "priority": "high"},
-    "Ashley Spencer":      {"type": "internal", "peer_id": "ashley-spencer",      "priority": "high"},
-    "Viktor Kovtun":       {"type": "internal", "peer_id": "viktor-kovtun",       "priority": "high"},
-    "Phil":                {"type": "internal", "peer_id": "phil",                "priority": "medium"},
-    "Theja Talla":         {"type": "internal", "peer_id": "theja-talla",         "priority": "medium"},
-    "Erich":               {"type": "internal", "peer_id": "erich",               "priority": "medium"},
-    "Chris Dolan":         {"type": "internal", "peer_id": "chris-dolan",         "priority": "medium"},
-    "Viktor Kovtun":       {"type": "internal", "peer_id": "viktor-kovtun",       "priority": "high"},
-    "Oleh Kuchuk":         {"type": "internal", "peer_id": "oleh-kuchuk",         "priority": "low"},
-    "Kostiantyn Saliuk":   {"type": "internal", "peer_id": "kostiantyn-saliuk",   "priority": "low"},
-    "Ertugrul Goktas":     {"type": "internal", "peer_id": "ertugrul-goktas",     "priority": "low"},
-    "Mete Alanli":         {"type": "internal", "peer_id": "mete-alanli",         "priority": "low"},
-    "Logan Hohs":          {"type": "internal", "peer_id": "logan-hohs",          "priority": "low"},
-}
-
-
-def sanitize_peer_id(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+from shared import VAULT_PATH, PEOPLE_DIR, HONCHO_BASE_URL, HONCHO_WORKSPACE, get_honcho, sanitize_id, USER_NAME, USER_TITLE
+from config import TRACKED_PEOPLE
 
 
 def get_honcho_context(honcho, peer_id: str, person_name: str) -> str:
     """Query Honcho for everything it knows about this person."""
     agent_peer = honcho.peer("agent-main")
+    role_label = f"{USER_NAME} ({USER_TITLE})" if USER_TITLE else USER_NAME
     prompt = (
         f"Tell me everything you know about {person_name} at the company. "
         f"Include: their role and responsibilities, what they're currently working on, "
         f"recent conversations or decisions involving them, their communication style and preferences, "
-        f"their relationship with James (CTO), notable opinions, commitments made or owed, "
+        f"their relationship with {role_label}, notable opinions, commitments made or owed, "
         f"and any open threads or blockers. Be specific. Skip anything you don't have data on."
     )
     try:
@@ -98,7 +68,7 @@ def main():
             print(f"{info['priority']:6}  {name}")
         return
 
-    honcho = Honcho(base_url=HONCHO_BASE_URL, workspace_id=HONCHO_WORKSPACE)
+    honcho = get_honcho()
 
     targets = {}
     if args.person:
@@ -107,7 +77,7 @@ def main():
         else:
             targets[args.person] = {
                 "type": "internal",
-                "peer_id": sanitize_peer_id(args.person),
+                "peer_id": sanitize_id(args.person),
                 "priority": "medium",
             }
     else:

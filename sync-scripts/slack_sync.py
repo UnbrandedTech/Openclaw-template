@@ -17,6 +17,9 @@ import argparse
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+from shared import MESSAGES_DIR, load_json, save_json, atomic_write_text, script_lock
+from config import PRIORITY_CHANNELS, PRIORITY_DM_USERS
+
 try:
     from slack_sdk import WebClient
     from slack_sdk.errors import SlackApiError
@@ -24,24 +27,9 @@ except ImportError:
     print("ERROR: slack_sdk not installed. Run: pip3 install slack-sdk --break-system-packages")
     sys.exit(1)
 
-WORKSPACE = Path.home() / ".openclaw" / "workspace"
-MESSAGES_DIR = WORKSPACE / "slack_messages"
 STATE_FILE = MESSAGES_DIR / ".sync_state.json"
 RETENTION_DAYS = 14
 PRUNE_INTERVAL_HOURS = 24
-
-# High-priority channels that always sync (even if no detected changes).
-PRIORITY_CHANNELS = {
-    "C06LQK68603",   # Co-founder group DM
-    "C0ABV7Y1RNF",   # Test channel
-}
-
-# High-priority DM users that always sync.
-# Slack's `updated` field for DMs is unreliable (can be years stale).
-PRIORITY_DM_USERS = {
-    "U052KUFMPDX",   # Tom Montgomery
-    "U052KUP15U1",   # Preston Rutherford
-}
 
 
 def get_token():
@@ -63,28 +51,31 @@ def get_token():
 
 
 def load_state():
-    if STATE_FILE.exists():
-        with open(STATE_FILE) as f:
-            return json.load(f)
-    return {}
+    return load_json(STATE_FILE)
 
 
 def save_state(state):
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    save_json(STATE_FILE, state)
 
 
-def slack_api_call_with_retry(fn, **kwargs):
-    """Call a Slack API method with one retry on rate limit."""
-    try:
-        return fn(**kwargs)
-    except SlackApiError as e:
-        if e.response.get("error") == "ratelimited":
-            retry_after = int(e.response.headers.get("Retry-After", 5))
-            print(f"    Rate limited, waiting {retry_after}s...")
-            time.sleep(retry_after)
+def slack_api_call_with_retry(fn, max_retries=2, **kwargs):
+    """Call a Slack API method with retries on rate limit and transient errors."""
+    for attempt in range(max_retries + 1):
+        try:
             return fn(**kwargs)
-        raise
+        except SlackApiError as e:
+            error = e.response.get("error", "")
+            if error == "ratelimited":
+                retry_after = int(e.response.headers.get("Retry-After", 5))
+                print(f"    Rate limited, waiting {retry_after}s...")
+                time.sleep(retry_after)
+                continue
+            status = getattr(e.response, 'status_code', 0)
+            if status >= 500 and attempt < max_retries:
+                print(f"    Server error ({status}), retrying in {2 ** attempt}s...")
+                time.sleep(2 ** attempt)
+                continue
+            raise
 
 
 def load_existing_ts(jsonl_path: Path) -> set:
@@ -138,8 +129,8 @@ def prune_old_messages(jsonl_path: Path):
                     kept.append(line)
             except Exception:
                 pass
-    with open(jsonl_path, "w") as f:
-        f.write("\n".join(kept) + ("\n" if kept else ""))
+    content = "\n".join(kept) + ("\n" if kept else "")
+    atomic_write_text(jsonl_path, content)
 
 
 def should_prune(state: dict) -> bool:
@@ -283,7 +274,7 @@ def sync_channel(client, channel: dict, state: dict, user_cache: dict,
     else:
         oldest = (datetime.now(timezone.utc) - timedelta(hours=fetch_hours)).timestamp()
 
-    print(f"  Syncing #{channel_name} (since {datetime.fromtimestamp(oldest).strftime('%Y-%m-%d %H:%M')})")
+    print(f"  Syncing #{channel_name} (since {datetime.fromtimestamp(oldest, tz=timezone.utc).strftime('%Y-%m-%d %H:%M')})")
 
     existing_ts = load_existing_ts(jsonl_path)
 
@@ -370,114 +361,115 @@ def main():
                         help="Skip fetching thread replies (faster)")
     args = parser.parse_args()
 
-    token = args.token or get_token()
-    if not token or not token.startswith("xoxp-"):
-        print("ERROR: No valid user token found. Set SLACK_USER_TOKEN or pass --token")
-        sys.exit(1)
+    with script_lock("slack_sync"):
+        token = args.token or get_token()
+        if not token or not token.startswith("xoxp-"):
+            print("ERROR: No valid user token found. Set SLACK_USER_TOKEN or pass --token")
+            sys.exit(1)
 
-    MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
+        MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
 
-    client = WebClient(token=token)
-    state = load_state()
+        client = WebClient(token=token)
+        state = load_state()
 
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting Slack sync...")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting Slack sync...")
 
-    # 1. Build user cache (bulk fetch via users.list, cached 24h)
-    user_cache = resolve_users_bulk(client, MESSAGES_DIR)
+        # 1. Build user cache (bulk fetch via users.list, cached 24h)
+        user_cache = resolve_users_bulk(client, MESSAGES_DIR)
 
-    # 2. Get all channels
-    channels = []
-    cursor = None
-    while True:
-        resp = slack_api_call_with_retry(
-            client.conversations_list,
-            types="public_channel,private_channel,im,mpim",
-            exclude_archived=True,
-            limit=200,
-            cursor=cursor
-        )
-        channels.extend(resp.get("channels", []))
-        cursor = resp.get("response_metadata", {}).get("next_cursor")
-        if not cursor:
-            break
-        time.sleep(0.3)
+        # 2. Get all channels
+        channels = []
+        cursor = None
+        while True:
+            resp = slack_api_call_with_retry(
+                client.conversations_list,
+                types="public_channel,private_channel,im,mpim",
+                exclude_archived=True,
+                limit=200,
+                cursor=cursor
+            )
+            channels.extend(resp.get("channels", []))
+            cursor = resp.get("response_metadata", {}).get("next_cursor")
+            if not cursor:
+                break
+            time.sleep(0.3)
 
-    member_channels = [
-        c for c in channels
-        if c.get("is_member") or c.get("is_im") or c.get("is_mpim")
-    ]
-    print(f"Found {len(member_channels)} channels/DMs total")
+        member_channels = [
+            c for c in channels
+            if c.get("is_member") or c.get("is_im") or c.get("is_mpim")
+        ]
+        print(f"Found {len(member_channels)} channels/DMs total")
 
-    # 3. Save channel metadata (topic, purpose, member count)
-    save_channel_metadata(member_channels, MESSAGES_DIR)
+        # 3. Save channel metadata (topic, purpose, member count)
+        save_channel_metadata(member_channels, MESSAGES_DIR)
 
-    # 4. Smart filtering: detect channels with new messages.
-    # For regular channels: use `updated` (ms timestamp) vs our last_check.
-    # For DMs: Slack's `updated` field is BROKEN (can be years stale even with
-    # recent messages). Always sync priority DM users; skip other DMs using
-    # `updated` as a best-effort heuristic (it works for some, not all).
-    active_channels = []
-    pre_skipped = 0
-    for ch in member_channels:
-        ch_id = ch["id"]
-        is_priority = ch_id in PRIORITY_CHANNELS
-        is_dm = ch.get("is_im")
-        is_mpim = ch.get("is_mpim")
-        is_priority_dm = is_dm and ch.get("user") in PRIORITY_DM_USERS
+        # 4. Smart filtering: detect channels with new messages.
+        # For regular channels: use `updated` (ms timestamp) vs our last_check.
+        # For DMs: Slack's `updated` field is BROKEN (can be years stale even with
+        # recent messages). Always sync priority DM users; skip other DMs using
+        # `updated` as a best-effort heuristic (it works for some, not all).
+        active_channels = []
+        pre_skipped = 0
+        for ch in member_channels:
+            ch_id = ch["id"]
+            is_priority = ch_id in PRIORITY_CHANNELS
+            is_dm = ch.get("is_im")
+            is_mpim = ch.get("is_mpim")
+            is_priority_dm = is_dm and ch.get("user") in PRIORITY_DM_USERS
 
-        stored = state.get(ch_id, {})
-        updated_ms = ch.get("updated", 0)
-        last_check_ms = int(stored.get("last_check_ts", 0) * 1000)
+            stored = state.get(ch_id, {})
+            updated_ms = ch.get("updated", 0)
+            last_check_ms = int(stored.get("last_check_ts", 0) * 1000)
 
-        if is_priority or is_priority_dm or is_mpim:
-            # Always sync: priority channels, priority DMs, group DMs
-            active_channels.append(ch)
-        elif is_dm:
-            # Non-priority DMs: use `updated` but with a generous staleness
-            # window. If we haven't checked in 6+ hours, sync anyway.
-            hours_since_check = (time.time() - stored.get("last_check_ts", 0)) / 3600
-            if hours_since_check > 6:
+            if is_priority or is_priority_dm or is_mpim:
+                # Always sync: priority channels, priority DMs, group DMs
                 active_channels.append(ch)
-            elif updated_ms and last_check_ms and updated_ms <= last_check_ms:
-                pre_skipped += 1
+            elif is_dm:
+                # Non-priority DMs: use `updated` but with a generous staleness
+                # window. If we haven't checked in 6+ hours, sync anyway.
+                hours_since_check = (time.time() - stored.get("last_check_ts", 0)) / 3600
+                if hours_since_check > 6:
+                    active_channels.append(ch)
+                elif updated_ms and last_check_ms and updated_ms <= last_check_ms:
+                    pre_skipped += 1
+                else:
+                    active_channels.append(ch)
             else:
-                active_channels.append(ch)
-        else:
-            # Regular channels: `updated` is generally reliable
-            if updated_ms and last_check_ms and updated_ms <= last_check_ms:
-                pre_skipped += 1
-                if args.verbose:
-                    name = ch.get("name") or ch_id
-                    print(f"  Pre-skip #{name} (updated {updated_ms} <= last_check {last_check_ms})")
+                # Regular channels: `updated` is generally reliable
+                if updated_ms and last_check_ms and updated_ms <= last_check_ms:
+                    pre_skipped += 1
+                    if args.verbose:
+                        name = ch.get("name") or ch_id
+                        print(f"  Pre-skip #{name} (updated {updated_ms} <= last_check {last_check_ms})")
+                else:
+                    active_channels.append(ch)
+
+        print(f"Active: {len(active_channels)}, pre-skipped: {pre_skipped}")
+
+        # 5. Sync active channels
+        synced = 0
+        errors = 0
+        total_msgs = 0
+        for ch in active_channels:
+            status, count = sync_channel(
+                client, ch, state, user_cache,
+                fetch_hours=args.hours, verbose=args.verbose,
+                skip_threads=args.skip_threads,
+            )
+            if status == "synced":
+                synced += 1
+                total_msgs += count
             else:
-                active_channels.append(ch)
+                errors += 1
 
-    print(f"Active: {len(active_channels)}, pre-skipped: {pre_skipped}")
+        # 6. Prune old messages (daily, not every run)
+        if should_prune(state):
+            prune_all(state)
 
-    # 5. Sync active channels
-    synced = 0
-    errors = 0
-    total_msgs = 0
-    for ch in active_channels:
-        status, count = sync_channel(
-            client, ch, state, user_cache,
-            fetch_hours=args.hours, verbose=args.verbose,
-            skip_threads=args.skip_threads,
-        )
-        if status == "synced":
-            synced += 1
-            total_msgs += count
-        else:
-            errors += 1
-
-    # 6. Prune old messages (daily, not every run)
-    if should_prune(state):
-        prune_all(state)
-
-    save_state(state)
-    print(f"Sync complete. {synced} channels synced (+{total_msgs} msgs), "
-          f"{pre_skipped} pre-skipped, {errors} errors. "
-          f"Stored in {MESSAGES_DIR}")
+        save_state(state)
+        print(f"Sync complete. {synced} channels synced (+{total_msgs} msgs), "
+              f"{pre_skipped} pre-skipped, {errors} errors. "
+              f"Stored in {MESSAGES_DIR}")
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ One-script setup for OpenClaw on a fresh Mac with Claude Max.
 ## Quick Start
 
 ```bash
-git clone https://github.com/MarathonData/openclaw-setup.git
+git clone https://github.com/YOUR-ORG/openclaw-setup.git
 cd openclaw-setup
 ./setup.sh
 ```
@@ -24,9 +24,9 @@ The script will:
 ## What You Need
 
 - macOS 14+
-- Claude Max subscription (or Anthropic API key)
+- Google Cloud project with Vertex AI + Claude models enabled
 - Slack workspace admin access (to create a bot)
-- Google Workspace account (@marathondataco.com)
+- Google Workspace account
 
 ## After Setup
 
