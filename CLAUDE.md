@@ -118,7 +118,7 @@ Model roles (`fast`, `reasoning`) are mapped to specific provider/model in `open
 - No hardcoded names, IDs, or company data — everything from `user.json` + `team.json`.
 - No hardcoded model names — scripts use `call_llm(prompt, role="fast"|"reasoning")` which reads from `openclaw.json`.
 - All config auto-discovered during setup, editable afterward.
-- `sed -i ''` in setup.sh is macOS-specific (Linux support tracked in issue #1).
+- `sedi()` wrapper in setup.sh handles cross-platform `sed -i` (macOS needs `''` arg, Linux doesn't).
 
 ## Environment Variables
 
