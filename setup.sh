@@ -10,6 +10,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OPENCLAW_DIR="$HOME/.openclaw"
 WORKSPACE="$OPENCLAW_DIR/workspace"
+VENV_PYTHON="$HOME/.openclaw/venv/bin/python3"
 
 # ── OS detection ────────────────────────────────────────────────────
 OS="$(uname -s)"
@@ -947,8 +948,6 @@ if [ "$WIZARD" = true ]; then
     gum style --faint --italic "Tell us about yourself so the agent knows who it's working for."
     echo ""
 fi
-
-VENV_PYTHON="$HOME/.openclaw/venv/bin/python3"
 
 echo ""
 wizard_input "What's your name? (e.g., Jane Doe)" "Jane Doe"
