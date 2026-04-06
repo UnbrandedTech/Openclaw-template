@@ -431,6 +431,40 @@ def parse_sonnet_response(response_text: str) -> dict:
 # ── Merge into team.json ──────────────────────────────────────────────────
 
 
+def deduplicate_people(people: dict) -> dict:
+    """Remove likely duplicate entries from tracked_people.
+
+    Detects when a username-style entry (e.g., "Tgreene Montgomery") shares
+    a last name with a proper-name entry (e.g., "Tom Montgomery") and drops
+    the username variant.
+    """
+    # Build index: last_name -> list of (name, has_space)
+    by_last = {}
+    for name in people:
+        parts = name.split()
+        if len(parts) >= 2:
+            last = parts[-1].lower()
+            by_last.setdefault(last, []).append(name)
+
+    to_remove = set()
+    for last, names in by_last.items():
+        if len(names) <= 1:
+            continue
+        # Prefer entries where first name looks like a real name (not a username)
+        real_names = [n for n in names if not any(c.isdigit() for c in n.split()[0]) and n.split()[0][0].isupper()]
+        username_names = [n for n in names if n not in real_names]
+        if real_names and username_names:
+            for dup in username_names:
+                to_remove.add(dup)
+
+    if to_remove:
+        cleaned = {k: v for k, v in people.items() if k not in to_remove}
+        for name in to_remove:
+            print(f"  Dedup: removed '{name}' (duplicate of another {name.split()[-1]})")
+        return cleaned
+    return people
+
+
 def merge_into_team(existing: dict, analysis: dict) -> dict:
     """Merge Sonnet's analysis into existing team.json, preserving manual fields."""
     merged = dict(existing)
@@ -607,6 +641,9 @@ def main():
 
     existing = load_json(TEAM_FILE)
     merged = merge_into_team(existing, analysis)
+
+    # Deduplicate people (removes username-style duplicates like "Tgreene Montgomery")
+    merged["tracked_people"] = deduplicate_people(merged.get("tracked_people", {}))
 
     save_json(TEAM_FILE, merged)
     print(f"\n  Wrote {TEAM_FILE}")

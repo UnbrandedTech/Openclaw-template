@@ -21,7 +21,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from shared import WORKSPACE, MESSAGES_DIR, save_json, load_json, USER_SLACK_ID, get_secret
+from shared import WORKSPACE, MESSAGES_DIR, save_json, load_json, USER_SLACK_ID, sanitize_id, get_secret
 
 try:
     from slack_sdk import WebClient
@@ -330,6 +330,54 @@ def discover_people(bot_uids: set, user_profiles: dict = None) -> dict:
     }
 
 
+# ── Peer merge detection ───────────────────────────────────────────────────
+
+def detect_peer_merges(scored: list[dict], user_profiles: dict) -> dict:
+    """Detect likely duplicate people by name similarity.
+
+    DM channels use Slack usernames (e.g., "tgreenemontgomery") which differ
+    from display names ("Tom Montgomery"). This finds cases where a scored
+    person's name is likely a username variant of another person.
+
+    Returns: {duplicate_peer_id: canonical_peer_id}
+    """
+    merges = {}
+    names_by_peer = {}
+    for p in scored:
+        peer_id = sanitize_id(p["name"])
+        names_by_peer[peer_id] = p["name"]
+
+    # Build a lookup of last names from display names
+    last_names = {}
+    for p in scored:
+        parts = p["name"].split()
+        if len(parts) >= 2:
+            last = parts[-1].lower()
+            peer_id = sanitize_id(p["name"])
+            last_names.setdefault(last, []).append(peer_id)
+
+    # Check for username-style names that contain a known last name
+    for p in scored:
+        name = p["name"]
+        peer_id = sanitize_id(name)
+        # Skip names that look like real names (have a space)
+        if " " in name:
+            continue
+        # Check if this single-word name contains a last name from another person
+        name_lower = name.lower()
+        for last, peer_ids in last_names.items():
+            if last in name_lower and len(last) >= 3:
+                for canonical in peer_ids:
+                    if canonical != peer_id:
+                        merges[peer_id] = canonical
+                        print(f"  Merge detected: '{name}' -> '{names_by_peer[canonical]}' (shared: {last})")
+                        break
+                if peer_id in merges:
+                    break
+
+    return merges
+
+
 # ── Main ────────────────────────────────────────────────────────────────────
 
 def main():
@@ -384,14 +432,21 @@ def main():
     internal_domain = bots.get("internal_domain", "")
     people = discover_people(bot_uids, user_profiles)
 
+    # Detect likely duplicate peers
+    merges = detect_peer_merges(people["all_scored"], user_profiles)
+
+    # Filter out merged duplicates from scored list
+    filtered_scored = [p for p in people["all_scored"] if sanitize_id(p["name"]) not in merges]
+
     # Save scored people data for analyze_priorities.py to use as input
     if not args.dry_run:
         save_json(WORKSPACE / "discovered_people.json", {
-            "scored": people["all_scored"],
+            "scored": filtered_scored,
+            "peer_merges": merges,
             "internal_domain": internal_domain,
             "discovered_at": datetime.now(timezone.utc).isoformat(),
         })
-        print(f"  Wrote discovered_people.json ({len(people['all_scored'])} scored)")
+        print(f"  Wrote discovered_people.json ({len(filtered_scored)} scored, {len(merges)} merged)")
 
         # Save user profiles for honcho_slack_sync to use
         save_json(WORKSPACE / "discovered_profiles.json", {
@@ -407,7 +462,7 @@ def main():
     print("\nDiscovery complete:")
     print(f"  Bots:     {len(bot_uids)}")
     print(f"  Excluded: {len(channels['exclude_channels'])} channels")
-    print(f"  People:   {len(people['all_scored'])} scored")
+    print(f"  People:   {len(filtered_scored)} scored ({len(merges)} duplicates merged)")
     if internal_domain:
         print(f"  Internal: @{internal_domain}")
     if people["all_scored"]:
