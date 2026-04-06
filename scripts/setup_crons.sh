@@ -4,8 +4,8 @@
 
 PYTHON="$HOME/.openclaw/venv/bin/python3"
 SCRIPTS="$HOME/.openclaw/workspace/scripts"
-FAST_MODEL=$(jq -r '.models.fast' "$HOME/.openclaw/openclaw.json")
-REASONING_MODEL=$(jq -r '.models.reasoning' "$HOME/.openclaw/openclaw.json")
+FAST_MODEL=$(jq -r '.models.fast' "$HOME/.openclaw/openclaw-sync.json")
+REASONING_MODEL=$(jq -r '.models.reasoning' "$HOME/.openclaw/openclaw-sync.json")
 
 echo "Creating cron jobs... (fast=$FAST_MODEL, reasoning=$REASONING_MODEL)"
 

@@ -1,14 +1,12 @@
 {
-  "models": {
-    "fast": "vertex/gemini-2.5-flash",
-    "reasoning": "vertex/claude-sonnet-4-6"
+  "gateway": {
+    "mode": "local"
   },
   "auth": {
     "profiles": {
       "vertex:default": {
         "provider": "vertex",
-        "project_id": "YOUR_PROJECT_ID",
-        "region": "us-east5"
+        "mode": "oauth"
       }
     }
   },
@@ -21,13 +19,8 @@
     "list": [
       {
         "id": "main",
-        "model": "vertex/gemini-2.5-flash",
-        "heartbeat": {
-          "enabled": true,
-          "intervalMs": 3600000
-        }
+        "model": "vertex/gemini-2.5-flash"
       }
     ]
-  },
-  "_comment": "Default uses Vertex AI (GCP). Change 'models' to switch providers: openai/, anthropic/, ollama/, bedrock/. Scripts reference the 'fast' and 'reasoning' roles, not specific model IDs."
+  }
 }

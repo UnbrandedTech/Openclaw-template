@@ -262,7 +262,7 @@ if _env_file.exists():
 
 # ── LLM calling ──────────────────────────────────────────────────────────────
 
-OPENCLAW_CONFIG = Path.home() / ".openclaw" / "openclaw.json"
+OPENCLAW_CONFIG = Path.home() / ".openclaw" / "openclaw-sync.json"
 
 
 def call_llm(prompt: str, role: str = "fast", max_tokens: int = 4096) -> str:

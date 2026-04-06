@@ -637,8 +637,8 @@ AI_OK=true
 
 if [ "$AI_PROVIDER" = "vertex" ]; then
     # ── Vertex AI: full GCP auth flow ───────────────────────────
-    GCP_PROJECT=$(jq -r '.auth.profiles["vertex:default"].project_id' "$SCRIPT_DIR/templates/openclaw.json")
-    GCP_REGION=$(jq -r '.auth.profiles["vertex:default"].region' "$SCRIPT_DIR/templates/openclaw.json")
+    GCP_PROJECT=$(jq -r '.auth.profiles["vertex:default"].project_id' "$SCRIPT_DIR/templates/openclaw-sync.json")
+    GCP_REGION=$(jq -r '.auth.profiles["vertex:default"].region' "$SCRIPT_DIR/templates/openclaw-sync.json")
 
     # Prompt if template still has placeholders
     if [ -z "$GCP_PROJECT" ] || [ "$GCP_PROJECT" = "YOUR_PROJECT_ID" ] || [ "$GCP_PROJECT" = "null" ]; then
@@ -858,28 +858,68 @@ elif [ "$AI_PROVIDER" = "bedrock" ]; then
     fi
 fi
 
-# ── Generate openclaw.json ──────────────────────────────────────
+# ── Generate config files ─────────────────────────────────────
+# openclaw.json       — gateway config (strict schema, validated by OpenClaw)
+# openclaw-sync.json  — sync script config (models, project_id, auth details)
 
+mkdir -p "$OPENCLAW_DIR"
+
+# -- Gateway config (openclaw.json) --
 if [ ! -f "$OPENCLAW_DIR/openclaw.json" ]; then
-    mkdir -p "$OPENCLAW_DIR"
+    GATEWAY_AUTH_MODE="oauth"
+    GATEWAY_AUTH_PROFILE=""
+    GATEWAY_MODEL="$FAST_MODEL"
 
-    if [ "$AI_PROVIDER" = "vertex" ]; then
-        # Vertex: use template and inject actual project/region
-        cp "$SCRIPT_DIR/templates/openclaw.json" "$OPENCLAW_DIR/openclaw.json"
-        sedi "s/YOUR_PROJECT_ID/$GCP_PROJECT/g" "$OPENCLAW_DIR/openclaw.json"
-        sedi "s/us-east5/$GCP_REGION/g" "$OPENCLAW_DIR/openclaw.json"
-        log "Created openclaw.json (Vertex AI, project: $GCP_PROJECT, region: $GCP_REGION)"
-    else
-        # Non-Vertex: generate config with selected provider
-        AUTH_PROFILE=""
-        case "$AI_PROVIDER" in
-            openai)    AUTH_PROFILE='"openai:default": {"provider": "openai", "api_key_env": "OPENAI_API_KEY"}' ;;
-            anthropic) AUTH_PROFILE='"anthropic:default": {"provider": "anthropic", "api_key_env": "ANTHROPIC_API_KEY"}' ;;
-            ollama)    AUTH_PROFILE='"ollama:default": {"provider": "ollama", "base_url": "http://localhost:11434"}' ;;
-            bedrock)   AUTH_PROFILE="\"bedrock:default\": {\"provider\": \"bedrock\", \"region\": \"$BEDROCK_REGION\"}" ;;
-        esac
+    case "$AI_PROVIDER" in
+        vertex)    GATEWAY_AUTH_PROFILE="\"vertex:default\": {\"provider\": \"vertex\", \"mode\": \"oauth\"}" ;;
+        openai)    GATEWAY_AUTH_PROFILE="\"openai:default\": {\"provider\": \"openai\", \"mode\": \"api_key\"}" ;;
+        anthropic) GATEWAY_AUTH_PROFILE="\"anthropic:default\": {\"provider\": \"anthropic\", \"mode\": \"api_key\"}" ;;
+        ollama)    GATEWAY_AUTH_PROFILE="\"ollama:default\": {\"provider\": \"ollama\", \"mode\": \"api_key\"}" ;;
+        bedrock)   GATEWAY_AUTH_PROFILE="\"bedrock:default\": {\"provider\": \"bedrock\", \"mode\": \"oauth\"}" ;;
+    esac
 
-        cat > "$OPENCLAW_DIR/openclaw.json" << CONFIGEOF
+    cat > "$OPENCLAW_DIR/openclaw.json" << GWEOF
+{
+  "gateway": {
+    "mode": "local"
+  },
+  "auth": {
+    "profiles": {
+      $GATEWAY_AUTH_PROFILE
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "$GATEWAY_MODEL"
+      }
+    },
+    "list": [
+      {
+        "id": "main",
+        "model": "$GATEWAY_MODEL"
+      }
+    ]
+  }
+}
+GWEOF
+    log "Created openclaw.json (gateway, $AI_PROVIDER)"
+else
+    log "openclaw.json exists"
+fi
+
+# -- Sync script config (openclaw-sync.json) --
+if [ ! -f "$OPENCLAW_DIR/openclaw-sync.json" ]; then
+    SYNC_AUTH_PROFILE=""
+    case "$AI_PROVIDER" in
+        vertex)    SYNC_AUTH_PROFILE="\"vertex:default\": {\"provider\": \"vertex\", \"project_id\": \"$GCP_PROJECT\", \"region\": \"${GCP_REGION:-us-east5}\"}" ;;
+        openai)    SYNC_AUTH_PROFILE="\"openai:default\": {\"provider\": \"openai\", \"api_key_env\": \"OPENAI_API_KEY\"}" ;;
+        anthropic) SYNC_AUTH_PROFILE="\"anthropic:default\": {\"provider\": \"anthropic\", \"api_key_env\": \"ANTHROPIC_API_KEY\"}" ;;
+        ollama)    SYNC_AUTH_PROFILE="\"ollama:default\": {\"provider\": \"ollama\", \"base_url\": \"http://localhost:11434\"}" ;;
+        bedrock)   SYNC_AUTH_PROFILE="\"bedrock:default\": {\"provider\": \"bedrock\", \"region\": \"${BEDROCK_REGION:-us-east-1}\"}" ;;
+    esac
+
+    cat > "$OPENCLAW_DIR/openclaw-sync.json" << SYNCEOF
 {
   "models": {
     "fast": "$FAST_MODEL",
@@ -887,32 +927,14 @@ if [ ! -f "$OPENCLAW_DIR/openclaw.json" ]; then
   },
   "auth": {
     "profiles": {
-      $AUTH_PROFILE
+      $SYNC_AUTH_PROFILE
     }
-  },
-  "agents": {
-    "defaults": {
-      "model": {
-        "primary": "$FAST_MODEL"
-      }
-    },
-    "list": [
-      {
-        "id": "main",
-        "model": "$FAST_MODEL",
-        "heartbeat": {
-          "enabled": true,
-          "intervalMs": 3600000
-        }
-      }
-    ]
   }
 }
-CONFIGEOF
-        log "Created openclaw.json ($AI_PROVIDER)"
-    fi
+SYNCEOF
+    log "Created openclaw-sync.json (models: $FAST_MODEL / $REASONING_MODEL)"
 else
-    log "openclaw.json exists"
+    log "openclaw-sync.json exists"
 fi
 
 # Save client_secret for gogcli/vdirsyncer (needed regardless of AI provider)
