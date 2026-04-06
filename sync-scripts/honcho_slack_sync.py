@@ -174,7 +174,9 @@ def main():
             if slack_uid in seen_peers:
                 return seen_peers[slack_uid]
             display_name = user_cache.get(slack_uid, slack_uid)
-            peer_id = sanitize_peer_id(slack_uid)
+            # Use display name as peer ID so it matches team.json peer_ids
+            # (analyze_priorities sets peer_id from name, not Slack UID)
+            peer_id = sanitize_id(display_name) if display_name != slack_uid else sanitize_peer_id(slack_uid)
             is_bot = slack_uid in BOT_UIDS
 
             # Build rich metadata from Slack profile
