@@ -215,15 +215,19 @@ def build_prompt(
 ) -> str:
     """Build the analysis prompt for Claude Sonnet."""
 
-    # -- Slack people summary --
+    # -- Slack people summary (enriched with profile data) --
     slack_section = "## Top Slack Contacts (by interaction score)\n\n"
     if slack_people:
-        slack_section += "| Name | DM Messages | Channel Count | Total Messages | Score |\n"
-        slack_section += "|------|------------|---------------|----------------|-------|\n"
+        slack_section += "| Name | Email | Title | Guest? | Classification | DMs | Channels | Score |\n"
+        slack_section += "|------|-------|-------|--------|---------------|-----|----------|-------|\n"
         for p in slack_people:
+            guest_tag = "YES (guest)" if p.get("is_guest") else "no"
+            classification = p.get("classification", "unknown")
+            email = p.get("email", "")
+            title = p.get("title", "")
             slack_section += (
-                f"| {p['name']} | {p['dm_messages']} | {p['channel_count']} "
-                f"| {p['total_messages']} | {p['score']} |\n"
+                f"| {p['name']} | {email} | {title} | {guest_tag} | {classification} "
+                f"| {p['dm_messages']} | {p.get('channel_count', p.get('channels', 0))} | {p['score']} |\n"
             )
     else:
         slack_section += "(No Slack data available)\n"
@@ -265,6 +269,20 @@ def build_prompt(
     else:
         channel_section += "(No channel data available)\n"
 
+    # -- Internal domain hint --
+    discovered = load_json(WORKSPACE / "discovered_people.json")
+    internal_domain = discovered.get("internal_domain", "")
+
+    domain_note = ""
+    if internal_domain:
+        domain_note = f"""
+CRITICAL CLASSIFICATION RULE:
+- Users with @{internal_domain} email addresses are INTERNAL team members. Never classify them as clients.
+- Users marked as "Guest" in Slack (is_guest=YES) are EXTERNAL contacts (clients, contractors, vendors).
+- Users with a different email domain who are NOT guests may be contractors or partners.
+- The "Classification" column already has a preliminary internal/external tag based on these signals. Trust it as a strong hint.
+"""
+
     # -- Services business emphasis --
     services_note = ""
     if services_business:
@@ -272,10 +290,11 @@ def build_prompt(
 IMPORTANT: This user runs a services/consulting business. Pay special attention to:
 - Identifying client companies from email domains (e.g., @acme.com contacts are likely from client "Acme")
 - Slack channel naming patterns that suggest client projects (e.g., "acme-project", "client-acme", "ext-acme")
-- Distinguishing between internal team members (same email domain as the user) and external client contacts
-- Grouping contacts by their company/client affiliation
+- Guest users are almost certainly client contacts
+- Internal team members (@{internal_domain}) should NEVER appear as client contacts
+- Grouping external contacts by their company/client affiliation
 - Marking client channels and their associated contacts
-"""
+""".replace("{internal_domain}", internal_domain)
 
     prompt = f"""You are analyzing workspace data for a professional to determine their priority contacts,
 client relationships, and important communication channels.
@@ -284,6 +303,8 @@ client relationships, and important communication channels.
 - Name: {USER_NAME or '(unknown)'}
 - Title: {USER_TITLE or '(unknown)'}
 - Company: {USER_COMPANY or '(unknown)'}
+- Internal email domain: @{internal_domain or '(unknown)'}
+{domain_note}
 {services_note}
 ## Workspace Data
 

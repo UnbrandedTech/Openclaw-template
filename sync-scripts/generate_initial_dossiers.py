@@ -43,8 +43,13 @@ RATE_LIMIT_SECONDS = 0.5
 # ── Honcho queries ────────────────────────────────────────────────────────────
 
 def get_person_context(honcho, peer_id: str, person_name: str) -> str:
-    """Query Honcho for everything it knows about a person."""
-    agent_peer = honcho.peer("agent-main")
+    """Query Honcho for everything it knows about a person.
+
+    Tries multiple approaches in order:
+      1. peer.chat() — agentic search across all knowledge
+      2. Peer metadata + card — structured facts
+      3. Empty string if nothing available
+    """
     role_label = f"{USER_NAME} ({USER_TITLE})" if USER_TITLE else USER_NAME
     prompt = (
         f"Tell me everything you know about {person_name}. "
@@ -53,20 +58,48 @@ def get_person_context(honcho, peer_id: str, person_name: str) -> str:
         f"their relationship with {role_label}, notable opinions, commitments made or owed, "
         f"and any open threads or blockers. Be specific. Skip anything you don't have data on."
     )
+
+    parts = []
+
+    # Try to get structured metadata from the peer
     try:
+        peer = honcho.peer(peer_id)
+        meta = getattr(peer, "metadata", None) or {}
+        if meta:
+            meta_lines = []
+            if meta.get("title"):
+                meta_lines.append(f"Title/Role: {meta['title']}")
+            if meta.get("email"):
+                meta_lines.append(f"Email: {meta['email']}")
+            if meta.get("type"):
+                meta_lines.append(f"Type: {meta['type']}")
+            if meta.get("is_guest"):
+                meta_lines.append("Slack status: Guest/External user")
+            if meta_lines:
+                parts.append("## Profile\n" + "\n".join(f"- {line}" for line in meta_lines))
+    except Exception:
+        pass
+
+    # Try peer.chat() for deep knowledge
+    try:
+        agent_peer = honcho.peer("agent-main")
         response = agent_peer.chat(prompt, target=peer_id, reasoning_level="medium")
-        return str(response).strip()
+        result = str(response).strip()
+        if result:
+            parts.append("## Knowledge\n" + result)
     except Exception as e:
-        # Fallback to peer card
+        # Try getting the peer card as fallback
         try:
             peer = honcho.peer(peer_id)
             card = peer.get_card()
             if card:
-                return "\n".join(f"- {f}" for f in card)
+                parts.append("## Peer Card\n" + "\n".join(f"- {f}" for f in card))
         except Exception:
             pass
-        print(f"  warn: {person_name} honcho error: {e}", file=sys.stderr)
-        return ""
+        if not parts:
+            print(f"  warn: {person_name} honcho error: {e}", file=sys.stderr)
+
+    return "\n\n".join(parts)
 
 
 def get_company_context(honcho, company_name: str, channels: list, contacts: list) -> str:

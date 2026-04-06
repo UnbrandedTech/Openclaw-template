@@ -19,7 +19,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from shared import MESSAGES_DIR, HONCHO_BASE_URL, HONCHO_WORKSPACE, get_honcho, load_json, save_json, sanitize_id, script_lock
+from shared import MESSAGES_DIR, WORKSPACE, HONCHO_BASE_URL, HONCHO_WORKSPACE, get_honcho, load_json, save_json, sanitize_id, script_lock
 from config import BOT_UIDS, EXCLUDE_CHANNELS
 
 SYNC_STATE_FILE = MESSAGES_DIR / ".honcho_sync_state.json"
@@ -131,6 +131,10 @@ def main():
         # Connect to Honcho
         honcho = get_honcho(args.base_url, args.workspace)
 
+        # Load enriched user profiles (from discover_workspace.py)
+        profiles_data = load_json(WORKSPACE / "discovered_profiles.json")
+        user_profiles = profiles_data.get("profiles", {})
+
         # Build peer registry (create once, reuse)
         seen_peers = {}
 
@@ -140,13 +144,28 @@ def main():
             display_name = user_cache.get(slack_uid, slack_uid)
             peer_id = sanitize_peer_id(slack_uid)
             is_bot = slack_uid in BOT_UIDS
-            config = {"observe_me": False} if is_bot else None
-            peer = honcho.peer(peer_id, metadata={
+
+            # Build rich metadata from Slack profile
+            profile = user_profiles.get(slack_uid, {})
+            metadata = {
                 "slack_uid": slack_uid,
                 "display_name": display_name,
                 "source": "slack",
                 "is_bot": is_bot,
-            }, configuration=config)
+            }
+            if profile.get("email"):
+                metadata["email"] = profile["email"]
+            if profile.get("email_domain"):
+                metadata["email_domain"] = profile["email_domain"]
+            if profile.get("title"):
+                metadata["title"] = profile["title"]
+            if profile.get("classification"):
+                metadata["type"] = profile["classification"]
+            if profile.get("is_guest"):
+                metadata["is_guest"] = True
+
+            config = {"observe_me": False} if is_bot else None
+            peer = honcho.peer(peer_id, metadata=metadata, configuration=config)
             seen_peers[slack_uid] = peer
             return peer
 
