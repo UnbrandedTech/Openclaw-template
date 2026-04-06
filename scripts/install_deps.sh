@@ -171,8 +171,15 @@ if ! command -v qmd &>/dev/null; then
     fi
     if command -v qmd &>/dev/null; then
         log "QMD installed"
+        # Symlink to /usr/local/bin so systemd services (openclaw gateway) can find it
+        QMD_PATH=$(command -v qmd)
+        if [ ! -f /usr/local/bin/qmd ]; then
+            sudo ln -sf "$QMD_PATH" /usr/local/bin/qmd 2>/dev/null && \
+                log "Symlinked qmd to /usr/local/bin/qmd" || \
+                warn "Could not symlink qmd to /usr/local/bin/qmd — run: sudo ln -s $QMD_PATH /usr/local/bin/qmd"
+        fi
     else
-        warn "QMD not on PATH. If installed via bun, try: sudo ln -s ~/.bun/bin/qmd /usr/local/bin/qmd"
+        warn "QMD not on PATH. Install manually: npm install -g @tobilu/qmd"
     fi
 else
     log "QMD already installed"
