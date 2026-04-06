@@ -70,12 +70,12 @@ def get_person_context(honcho, peer_id: str, person_name: str) -> str:
 
 
 def get_company_context(honcho, company_name: str, channels: list, contacts: list) -> str:
-    """Query Honcho for everything it knows about a client company."""
-    agent_peer = honcho.peer("agent-main")
+    """Query Honcho for everything it knows about a client company.
 
-    channel_hint = ""
-    if channels:
-        channel_hint = f" Relevant Slack channels: {', '.join(channels)}."
+    Queries the company's Slack channel sessions rather than a company peer
+    (companies don't have Honcho peers, only people do).
+    """
+    agent_peer = honcho.peer("agent-main")
 
     contact_hint = ""
     if contacts:
@@ -85,11 +85,24 @@ def get_company_context(honcho, company_name: str, channels: list, contacts: lis
         f"Tell me everything you know about the company {company_name} and our relationship with them. "
         f"Include: what they do, active projects or engagements we have with them, "
         f"meeting cadence, Slack communication patterns, key decision makers, "
-        f"deliverables and timelines, relationship health, and any notable context.{channel_hint}{contact_hint} "
+        f"deliverables and timelines, relationship health, and any notable context.{contact_hint} "
         f"Be specific. Skip anything you don't have data on."
     )
+
+    # Try querying each channel session for this company
+    for ch in channels:
+        session_id = f"slack-{ch}"
+        try:
+            response = agent_peer.chat(prompt, session=session_id, reasoning_level="medium")
+            result = str(response).strip()
+            if result:
+                return result
+        except Exception:
+            continue
+
+    # Fallback: query without a specific target/session
     try:
-        response = agent_peer.chat(prompt, target=sanitize_id(company_name), reasoning_level="medium")
+        response = agent_peer.chat(prompt, reasoning_level="medium")
         return str(response).strip()
     except Exception as e:
         print(f"  warn: {company_name} honcho error: {e}", file=sys.stderr)
@@ -255,20 +268,23 @@ def main():
             if args.priority == "all" or info.get("priority") == args.priority:
                 people_to_process[name] = {"info": info, "company": ""}
 
-        # Add client contacts as people (they get person dossiers with a company field)
+        # Add client contacts as people (skip if already tracked by name or peer_id)
+        existing_peer_ids = {info.get("peer_id") for info in tracked_people.values()}
         for company_name, company_info in clients.items():
             for contact_name in company_info.get("contacts", []):
-                if contact_name not in people_to_process:
-                    # Build a person info dict for the client contact
-                    contact_info = {
-                        "type": "client",
-                        "peer_id": sanitize_id(contact_name),
-                        "priority": "medium",
-                    }
-                    people_to_process[contact_name] = {
-                        "info": contact_info,
-                        "company": company_name,
-                    }
+                contact_peer_id = sanitize_id(contact_name)
+                # Skip if this person is already in tracked_people (by name or peer_id)
+                if contact_name in people_to_process or contact_peer_id in existing_peer_ids:
+                    continue
+                contact_info = {
+                    "type": "client",
+                    "peer_id": contact_peer_id,
+                    "priority": "medium",
+                }
+                people_to_process[contact_name] = {
+                    "info": contact_info,
+                    "company": company_name,
+                }
 
         total_people = len(people_to_process)
         print(f"\n--- Generating person dossiers ({total_people} people) ---\n")
