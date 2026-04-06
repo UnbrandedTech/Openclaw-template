@@ -244,7 +244,7 @@ def build_company_prompt(company_name: str, company_info: dict, honcho_context: 
     prompt = (
         f"You are generating an Obsidian company profile for {company_name}.\n\n"
         f"## Target Format\n\n"
-        f"```yaml\n"
+        f"The output must start with YAML frontmatter (between --- lines) followed by markdown:\n\n"
         f"---\n"
         f'company_name: "{company_name}"\n'
         f"type: {company_type}\n"
@@ -262,8 +262,7 @@ def build_company_prompt(company_name: str, company_info: dict, honcho_context: 
         f"## Communication\n"
         f"Slack channels, meeting cadence, key decision makers.\n\n"
         f"## Notes\n"
-        f"Anything notable about the relationship.\n"
-        f"```\n\n"
+        f"Anything notable about the relationship.\n\n"
         f"## Raw Context from Memory\n\n"
         f"{honcho_context}\n\n"
         f"## Instructions\n\n"
@@ -282,8 +281,21 @@ def build_company_prompt(company_name: str, company_info: dict, honcho_context: 
 
 # ── File writing ──────────────────────────────────────────────────────────────
 
+def _strip_code_fences(content: str) -> str:
+    """Remove wrapping code fences that LLMs sometimes add."""
+    stripped = content.strip()
+    if stripped.startswith("```"):
+        # Remove opening fence (```yaml, ```markdown, ```, etc.)
+        first_newline = stripped.index("\n") if "\n" in stripped else len(stripped)
+        stripped = stripped[first_newline + 1:]
+    if stripped.rstrip().endswith("```"):
+        stripped = stripped.rstrip()[:-3].rstrip()
+    return stripped
+
+
 def write_dossier(path: Path, content: str, dry_run: bool = False) -> bool:
     """Write a dossier file, creating parent directories as needed."""
+    content = _strip_code_fences(content)
     if dry_run:
         print(f"  [dry-run] Would write: {path}")
         return True
