@@ -93,7 +93,31 @@ if command -v psql &>/dev/null && psql -d postgres -lqt 2>/dev/null | cut -d \| 
     psql -d honcho -c "CREATE SCHEMA public;" 2>/dev/null || { err "CREATE SCHEMA failed"; exit 1; }
     # vector extension is optional — Honcho creates it if needed
     psql -d honcho -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || warn "pgvector extension not available (Honcho will work without it)"
-    log "Database wiped"
+    log "Schema wiped"
+
+    # Re-run Honcho migrations if running self-hosted from source
+    HONCHO_DIR="${HONCHO_PROJECT_DIR:-$HOME/Projects/Personal/honcho}"
+    if [ -f "$HONCHO_DIR/alembic.ini" ]; then
+        log "Running Honcho migrations..."
+        (cd "$HONCHO_DIR" && "$HONCHO_DIR/.venv/bin/alembic" upgrade heads 2>&1) || warn "Alembic migrations had errors"
+        log "Migrations complete"
+    fi
+
+    # Restart Honcho server so it picks up the fresh schema
+    if pgrep -f "src/main.py.*18790" &>/dev/null; then
+        log "Restarting Honcho server..."
+        pkill -f "src/main.py.*18790" 2>/dev/null || true
+        sleep 2
+        (cd "$HONCHO_DIR" && "$HONCHO_DIR/.venv/bin/fastapi" run src/main.py --port 18790 --host 127.0.0.1 &>/dev/null &)
+        sleep 3
+        if curl -s http://localhost:18790/ &>/dev/null; then
+            log "Honcho server restarted"
+        else
+            warn "Honcho server may not have started — check manually"
+        fi
+    fi
+
+    log "Database reset complete"
 else
     # Database doesn't exist, try to create it
     log "Creating honcho database..."
