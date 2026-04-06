@@ -99,6 +99,12 @@ for key in "${KEYCHAIN_KEYS[@]}"; do
 done
 log "removed"
 
+# ── Drop Honcho database ──────────────────────────────────────────
+if command -v psql &>/dev/null && psql -lqt 2>/dev/null | cut -d \| -f 1 | grep -qw honcho; then
+    echo -n "  Dropping honcho database... "
+    dropdb honcho 2>/dev/null && log "dropped" || warn "could not drop (may need sudo -u postgres)"
+fi
+
 # ── Remove vdirsyncer config ─────────────────────────────────────
 if [ -f ~/.config/vdirsyncer/config ]; then
     echo -n "  Removing vdirsyncer config... "
