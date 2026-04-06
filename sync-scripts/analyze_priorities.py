@@ -465,6 +465,42 @@ def deduplicate_people(people: dict) -> dict:
     return people
 
 
+def backfill_slack_uids(people: dict) -> dict:
+    """Match tracked people to their Slack UIDs from discovered data.
+
+    The LLM often leaves slack_uid empty. This matches by name against
+    the scored people list (which has UIDs from the Slack API).
+    """
+    discovered = load_json(WORKSPACE / "discovered_people.json")
+    scored = discovered.get("scored", [])
+
+    # Build lookup: lowercase name -> uid
+    name_to_uid = {}
+    for p in scored:
+        name_to_uid[p["name"].lower()] = p["uid"]
+
+    filled = 0
+    for name, info in people.items():
+        if info.get("slack_uid"):
+            continue
+        # Try exact match
+        uid = name_to_uid.get(name.lower())
+        if not uid:
+            # Try first name match
+            first = name.split()[0].lower() if name else ""
+            for scored_name, scored_uid in name_to_uid.items():
+                if scored_name == first or scored_name.startswith(first + " "):
+                    uid = scored_uid
+                    break
+        if uid:
+            info["slack_uid"] = uid
+            filled += 1
+
+    if filled:
+        print(f"  Backfilled {filled} Slack UIDs")
+    return people
+
+
 def merge_into_team(existing: dict, analysis: dict) -> dict:
     """Merge Sonnet's analysis into existing team.json, preserving manual fields."""
     merged = dict(existing)
@@ -644,6 +680,9 @@ def main():
 
     # Deduplicate people (removes username-style duplicates like "Tgreene Montgomery")
     merged["tracked_people"] = deduplicate_people(merged.get("tracked_people", {}))
+
+    # Backfill Slack UIDs that the LLM left empty
+    merged["tracked_people"] = backfill_slack_uids(merged.get("tracked_people", {}))
 
     save_json(TEAM_FILE, merged)
     print(f"\n  Wrote {TEAM_FILE}")

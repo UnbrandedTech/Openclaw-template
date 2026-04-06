@@ -42,23 +42,50 @@ RATE_LIMIT_SECONDS = 0.5
 
 # ── Honcho queries ────────────────────────────────────────────────────────────
 
+def _get_peer_messages(honcho, peer_id: str, max_messages: int = 80) -> list[str]:
+    """Fetch recent messages involving a peer from their sessions.
+
+    Uses the session context API which returns recent messages with summaries.
+    Falls back to listing sessions by name from the session_peers table.
+    """
+    messages = []
+
+    # Get sessions this peer is in
+    try:
+        peer = honcho.peer(peer_id)
+        sessions_resp = peer.sessions(page=1, size=10)
+        session_list = getattr(sessions_resp, "items", None)
+        if session_list is None:
+            session_list = sessions_resp if isinstance(sessions_resp, list) else []
+    except Exception:
+        session_list = []
+
+    for sess in session_list:
+        sess_id = getattr(sess, "id", getattr(sess, "name", str(sess)))
+        try:
+            session = honcho.session(sess_id)
+            msgs_resp = session.messages(page=1, size=20, reverse=True)
+            msg_items = getattr(msgs_resp, "items", msgs_resp) if hasattr(msgs_resp, "items") else []
+            for msg in msg_items:
+                content = getattr(msg, "content", "")
+                if content and len(content) > 10:
+                    messages.append(content)
+                if len(messages) >= max_messages:
+                    return messages
+        except Exception:
+            continue
+
+    return messages
+
+
 def get_person_context(honcho, peer_id: str, person_name: str) -> str:
     """Query Honcho for everything it knows about a person.
 
     Tries multiple approaches in order:
-      1. peer.chat() — agentic search across all knowledge
-      2. Peer metadata + card — structured facts
-      3. Empty string if nothing available
+      1. Peer metadata — structured profile facts
+      2. peer.chat() — agentic search (requires deriver to have run)
+      3. Raw session messages — direct message content for LLM summarization
     """
-    role_label = f"{USER_NAME} ({USER_TITLE})" if USER_TITLE else USER_NAME
-    prompt = (
-        f"Tell me everything you know about {person_name}. "
-        f"Include: their role and responsibilities, what they're currently working on, "
-        f"recent conversations or decisions involving them, their communication style and preferences, "
-        f"their relationship with {role_label}, notable opinions, commitments made or owed, "
-        f"and any open threads or blockers. Be specific. Skip anything you don't have data on."
-    )
-
     parts = []
 
     # Try to get structured metadata from the peer
@@ -80,24 +107,39 @@ def get_person_context(honcho, peer_id: str, person_name: str) -> str:
     except Exception:
         pass
 
-    # Try peer.chat() for deep knowledge
+    # Try peer.chat() for deep knowledge (works after deriver processes messages)
     try:
         agent_peer = honcho.peer("agent-main")
+        role_label = f"{USER_NAME} ({USER_TITLE})" if USER_TITLE else USER_NAME
+        prompt = (
+            f"Tell me everything you know about {person_name}. "
+            f"Include: their role, what they're working on, recent conversations, "
+            f"their relationship with {role_label}, and any open threads."
+        )
         response = agent_peer.chat(prompt, target=peer_id, reasoning_level="medium")
         result = str(response).strip()
         if result:
             parts.append("## Knowledge\n" + result)
-    except Exception as e:
-        # Try getting the peer card as fallback
-        try:
-            peer = honcho.peer(peer_id)
-            card = peer.get_card()
-            if card:
-                parts.append("## Peer Card\n" + "\n".join(f"- {f}" for f in card))
-        except Exception:
-            pass
-        if not parts:
-            print(f"  warn: {person_name} honcho error: {e}", file=sys.stderr)
+    except Exception:
+        pass
+
+    # Fallback: read raw messages from the peer's sessions
+    if len(parts) <= 1:  # Only metadata, no knowledge
+        messages = _get_peer_messages(honcho, peer_id)
+        if messages:
+            # Truncate to fit in an LLM prompt (~20K chars)
+            sample = []
+            total_chars = 0
+            for msg in messages:
+                if total_chars + len(msg) > 20000:
+                    break
+                sample.append(msg)
+                total_chars += len(msg)
+            if sample:
+                parts.append("## Recent Messages\n" + "\n---\n".join(sample))
+
+    if not parts:
+        print(f"  warn: no data for {person_name} in Honcho", file=sys.stderr)
 
     return "\n\n".join(parts)
 
@@ -289,6 +331,16 @@ def main():
 
     honcho = get_honcho()
 
+    # Build a UID -> Honcho peer_id lookup from discovered profiles
+    # (Honcho peers are created from display names which may differ from team.json names)
+    users_cache_path = WORKSPACE / "slack_messages" / ".users_cache.json"
+    users_cache = load_json(users_cache_path)
+    uid_to_peer_id = {}
+    for uid, name in users_cache.items():
+        if uid.startswith("_"):
+            continue
+        uid_to_peer_id[uid] = sanitize_id(name) if isinstance(name, str) and name != uid else uid.lower()
+
     stats = {"people_written": 0, "people_skipped": 0, "clients_written": 0, "clients_skipped": 0, "errors": 0}
 
     # ── Generate person dossiers ───────────────────────────────────────────
@@ -333,7 +385,17 @@ def main():
                 continue
 
             print(f"  [{i}/{total_people}] {person_name}... ", end="", flush=True)
-            context = get_person_context(honcho, info["peer_id"], person_name)
+
+            # Resolve the Honcho peer_id — team.json uses sanitized full name
+            # but Honcho peers may use sanitized display name (which can differ)
+            peer_id = info["peer_id"]
+            slack_uid = info.get("slack_uid", "")
+            if slack_uid and slack_uid in uid_to_peer_id:
+                resolved = uid_to_peer_id[slack_uid]
+                if resolved != peer_id:
+                    peer_id = resolved
+
+            context = get_person_context(honcho, peer_id, person_name)
 
             if not context:
                 print("no data, skipping")
