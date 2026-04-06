@@ -89,11 +89,19 @@ if command -v psql &>/dev/null && psql -d postgres -lqt 2>/dev/null | cut -d \| 
     # Wipe all data by dropping and recreating the public schema
     # (avoids needing CREATEDB privilege to drop/recreate the whole database)
     log "Wiping honcho data..."
-    psql -d honcho -c "DROP SCHEMA public CASCADE;" 2>/dev/null || { err "DROP SCHEMA failed"; exit 1; }
-    psql -d honcho -c "CREATE SCHEMA public;" 2>/dev/null || { err "CREATE SCHEMA failed"; exit 1; }
-    # vector extension is optional — Honcho creates it if needed
-    psql -d honcho -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || warn "pgvector extension not available (Honcho will work without it)"
-    log "Schema wiped"
+    # Drop all tables but keep the database and extensions
+    # (extensions like pgvector need superuser to recreate)
+    TABLES=$(psql -d honcho -t -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public';" 2>/dev/null | tr -d ' ' | grep -v '^$')
+    if [ -n "$TABLES" ]; then
+        for table in $TABLES; do
+            psql -d honcho -c "DROP TABLE IF EXISTS public.\"$table\" CASCADE;" 2>/dev/null
+        done
+    fi
+    # Also drop alembic version so migrations re-run from scratch
+    psql -d honcho -c "DROP TABLE IF EXISTS alembic_version CASCADE;" 2>/dev/null || true
+    # Drop any sequences, types, etc
+    psql -d honcho -c "DO \$\$ DECLARE r RECORD; BEGIN FOR r IN (SELECT typname FROM pg_type WHERE typnamespace = 'public'::regnamespace AND typtype = 'e') LOOP EXECUTE 'DROP TYPE IF EXISTS public.' || r.typname || ' CASCADE'; END LOOP; END \$\$;" 2>/dev/null || true
+    log "Tables dropped (extensions preserved)"
 
     # Re-run Honcho migrations if running self-hosted from source
     HONCHO_DIR="${HONCHO_PROJECT_DIR:-$HOME/Projects/Personal/honcho}"
