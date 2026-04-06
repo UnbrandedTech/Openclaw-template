@@ -53,7 +53,17 @@ echo "This will NOT remove: system packages (Node, Python, gum, gcloud, etc.)"
 echo ""
 
 if [ "$FORCE" = false ]; then
-    echo -e "${RED}Are you sure? This cannot be undone. (type 'yes' to confirm)${NC}"
+    # Back up user config so setup.sh can restore defaults
+BACKUP_DIR="$HOME/.openclaw-backup"
+echo -n "  Backing up user config to $BACKUP_DIR... "
+mkdir -p "$BACKUP_DIR"
+for f in "$WORKSPACE/user.json" "$WORKSPACE/.env" "$WORKSPACE/.slack_env" "$WORKSPACE/.google_env"; do
+    [ -f "$f" ] && cp "$f" "$BACKUP_DIR/" 2>/dev/null
+done
+log "done"
+echo ""
+
+echo -e "${RED}Are you sure? This cannot be undone. (type 'yes' to confirm)${NC}"
     read -r REPLY
     if [ "$REPLY" != "yes" ]; then
         echo "Aborted."

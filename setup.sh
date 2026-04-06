@@ -12,6 +12,40 @@ OPENCLAW_DIR="$HOME/.openclaw"
 WORKSPACE="$OPENCLAW_DIR/workspace"
 VENV_PYTHON="$HOME/.openclaw/venv/bin/python3"
 
+# ── Load previous config (from uninstall backup) ─────────────────
+BACKUP_DIR="$HOME/.openclaw-backup"
+PREV_USER_JSON="$BACKUP_DIR/user.json"
+if [ -f "$PREV_USER_JSON" ]; then
+    PREV_NAME=$(python3 -c "import json; print(json.load(open('$PREV_USER_JSON')).get('name',''))" 2>/dev/null)
+    PREV_EMAIL=$(python3 -c "import json; print(json.load(open('$PREV_USER_JSON')).get('email',''))" 2>/dev/null)
+    PREV_TZ=$(python3 -c "import json; print(json.load(open('$PREV_USER_JSON')).get('timezone',''))" 2>/dev/null)
+    PREV_SLACK_ID=$(python3 -c "import json; print(json.load(open('$PREV_USER_JSON')).get('slack_user_id',''))" 2>/dev/null)
+    PREV_SLACK_USER=$(python3 -c "import json; print(json.load(open('$PREV_USER_JSON')).get('slack_username',''))" 2>/dev/null)
+    PREV_TITLE=$(python3 -c "import json; print(json.load(open('$PREV_USER_JSON')).get('title',''))" 2>/dev/null)
+    PREV_COMPANY=$(python3 -c "import json; print(json.load(open('$PREV_USER_JSON')).get('company',''))" 2>/dev/null)
+    PREV_GITHUB=$(python3 -c "import json; print(json.load(open('$PREV_USER_JSON')).get('github_username',''))" 2>/dev/null)
+    PREV_SERVICES=$(python3 -c "import json; d=json.load(open('$PREV_USER_JSON')); print('true' if d.get('services_business') else 'false')" 2>/dev/null)
+    PREV_EMAIL_PROVIDER=$(python3 -c "import json; print(json.load(open('$PREV_USER_JSON')).get('email_provider',''))" 2>/dev/null)
+    PREV_CALENDAR_PROVIDER=$(python3 -c "import json; print(json.load(open('$PREV_USER_JSON')).get('calendar_provider',''))" 2>/dev/null)
+    PREV_KEYCHAIN=$(python3 -c "import json; d=json.load(open('$PREV_USER_JSON')); print('true' if d.get('keychain') else 'false')" 2>/dev/null)
+fi
+
+# Restore .env and .slack_env from backup if they exist
+if [ -f "$BACKUP_DIR/.env" ] && [ ! -f "$WORKSPACE/.env" ]; then
+    mkdir -p "$WORKSPACE"
+    cp "$BACKUP_DIR/.env" "$WORKSPACE/.env"
+    chmod 600 "$WORKSPACE/.env"
+fi
+if [ -f "$BACKUP_DIR/.slack_env" ] && [ ! -f "$WORKSPACE/.slack_env" ]; then
+    mkdir -p "$WORKSPACE"
+    cp "$BACKUP_DIR/.slack_env" "$WORKSPACE/.slack_env"
+    chmod 600 "$WORKSPACE/.slack_env"
+fi
+if [ -f "$BACKUP_DIR/.google_env" ] && [ ! -f "$WORKSPACE/.google_env" ]; then
+    mkdir -p "$WORKSPACE"
+    cp "$BACKUP_DIR/.google_env" "$WORKSPACE/.google_env"
+fi
+
 # ── Setup log file ────────────────────────────────────────────────
 mkdir -p "$OPENCLAW_DIR"
 SETUP_LOG="$OPENCLAW_DIR/setup.log"
@@ -1015,60 +1049,76 @@ if [ "$WIZARD" = true ]; then
 fi
 
 echo ""
-wizard_input "What's your name? (e.g., Jane Doe)" "Jane Doe"
-USER_NAME="$REPLY"
+if [ -n "${PREV_NAME:-}" ]; then
+    log "Previous config found. Press Enter to keep defaults."
+    echo ""
+fi
+wizard_input "What's your name? (e.g., Jane Doe)${PREV_NAME:+ [${PREV_NAME}]}" "${PREV_NAME:-Jane Doe}"
+USER_NAME="${REPLY:-$PREV_NAME}"
 
 # Derive first name from full name
 USER_FIRST="${USER_NAME%% *}"
 log "First name: $USER_FIRST"
 
-DETECTED_TZ=""
-if [ "$PLATFORM" = "macos" ]; then
-    DETECTED_TZ=$(readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||')
-elif command -v timedatectl &>/dev/null; then
-    DETECTED_TZ=$(timedatectl show -p Timezone --value 2>/dev/null || true)
-fi
-if [ -z "$DETECTED_TZ" ]; then
-    DETECTED_TZ=$(readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||' || true)
-fi
-if [ -n "$DETECTED_TZ" ]; then
-    log "Detected timezone: $DETECTED_TZ"
-    ask "Use $DETECTED_TZ as your timezone? (y/n, or type a different one)"
-    if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ] || [ -z "$REPLY" ]; then
-        USER_TZ="$DETECTED_TZ"
+if [ -n "${PREV_TZ:-}" ]; then
+    USER_TZ="$PREV_TZ"
+    log "Timezone: $USER_TZ (from previous config)"
+else
+    DETECTED_TZ=""
+    if [ "$PLATFORM" = "macos" ]; then
+        DETECTED_TZ=$(readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||')
+    elif command -v timedatectl &>/dev/null; then
+        DETECTED_TZ=$(timedatectl show -p Timezone --value 2>/dev/null || true)
+    fi
+    if [ -z "$DETECTED_TZ" ]; then
+        DETECTED_TZ=$(readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||' || true)
+    fi
+    if [ -n "$DETECTED_TZ" ]; then
+        log "Detected timezone: $DETECTED_TZ"
+        ask "Use $DETECTED_TZ as your timezone? (y/n, or type a different one)"
+        if [ "$REPLY" = "y" ] || [ "$REPLY" = "Y" ] || [ -z "$REPLY" ]; then
+            USER_TZ="$DETECTED_TZ"
+        else
+            USER_TZ="$REPLY"
+        fi
     else
+        ask "What's your timezone? (e.g., America/Denver)"
         USER_TZ="$REPLY"
     fi
-else
-    ask "What's your timezone? (e.g., America/Denver)"
-    USER_TZ="$REPLY"
 fi
 
-wizard_input "What's your email?" "jane@company.com"
-USER_EMAIL="$REPLY"
+wizard_input "What's your email?${PREV_EMAIL:+ [${PREV_EMAIL}]}" "${PREV_EMAIL:-jane@company.com}"
+USER_EMAIL="${REPLY:-$PREV_EMAIL}"
 
-wizard_input "Your Slack user ID? (e.g., UXXXXXXXXXX, press Enter to skip)" "UXXXXXXXXXX"
-USER_SLACK_ID="$REPLY"
+wizard_input "Your Slack user ID?${PREV_SLACK_ID:+ [${PREV_SLACK_ID}]}" "${PREV_SLACK_ID:-UXXXXXXXXXX}"
+USER_SLACK_ID="${REPLY:-$PREV_SLACK_ID}"
 
-wizard_input "Your Slack username? (e.g., jdoe, press Enter to skip)" "jdoe"
-SLACK_USERNAME="$REPLY"
+wizard_input "Your Slack username?${PREV_SLACK_USER:+ [${PREV_SLACK_USER}]}" "${PREV_SLACK_USER:-jdoe}"
+SLACK_USERNAME="${REPLY:-$PREV_SLACK_USER}"
 
-wizard_input "Your title/role? (press Enter to skip)" "CTO"
-USER_TITLE="$REPLY"
+wizard_input "Your title/role?${PREV_TITLE:+ [${PREV_TITLE}]}" "${PREV_TITLE:-CTO}"
+USER_TITLE="${REPLY:-$PREV_TITLE}"
 
-wizard_input "Company name? (press Enter to skip)" "Acme Corp"
-USER_COMPANY="$REPLY"
+wizard_input "Company name?${PREV_COMPANY:+ [${PREV_COMPANY}]}" "${PREV_COMPANY:-Acme Corp}"
+USER_COMPANY="${REPLY:-$PREV_COMPANY}"
 
 SYNC_GITHUB=false
-GITHUB_USERNAME=""
-if wizard_confirm "Do you use GitHub for work?"; then
+GITHUB_USERNAME="${PREV_GITHUB:-}"
+if [ -n "$PREV_GITHUB" ]; then
+    SYNC_GITHUB=true
+    wizard_input "GitHub username? [${PREV_GITHUB}]" "$PREV_GITHUB"
+    GITHUB_USERNAME="${REPLY:-$PREV_GITHUB}"
+elif wizard_confirm "Do you use GitHub for work?"; then
     SYNC_GITHUB=true
     wizard_input "GitHub username?" "jdoe"
     GITHUB_USERNAME="$REPLY"
 fi
 
 SERVICES_BIZ=false
-if wizard_confirm "Is your company services-based (agency, consulting)?"; then
+if [ "${PREV_SERVICES:-}" = "true" ]; then
+    SERVICES_BIZ=true
+    log "Services business: yes (from previous config)"
+elif wizard_confirm "Is your company services-based (agency, consulting)?"; then
     SERVICES_BIZ=true
 fi
 
