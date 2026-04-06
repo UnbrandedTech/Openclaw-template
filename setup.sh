@@ -905,7 +905,7 @@ if [ ! -f "$OPENCLAW_DIR/openclaw.json" ]; then
     GATEWAY_MODEL="$FAST_MODEL"
 
     case "$AI_PROVIDER" in
-        vertex)    GATEWAY_AUTH_PROFILE="\"vertex:default\": {\"provider\": \"vertex\", \"mode\": \"oauth\"}"    ; GATEWAY_AUTH_PROFILE_KEY="vertex:default"    ; GATEWAY_AUTH_PROVIDER="vertex"    ; GATEWAY_AUTH_MODE="oauth" ;;
+        vertex)    GATEWAY_AUTH_PROFILE=""  ; GATEWAY_AUTH_PROFILE_KEY=""  ; GATEWAY_AUTH_PROVIDER="google-vertex"  ; GATEWAY_AUTH_MODE="oauth"  ; GATEWAY_MODEL="google-vertex/gemini-2.5-flash" ;;
         openai)    GATEWAY_AUTH_PROFILE="\"openai:default\": {\"provider\": \"openai\", \"mode\": \"api_key\"}"    ; GATEWAY_AUTH_PROFILE_KEY="openai:default"    ; GATEWAY_AUTH_PROVIDER="openai"    ; GATEWAY_AUTH_MODE="api_key" ;;
         anthropic) GATEWAY_AUTH_PROFILE="\"anthropic:default\": {\"provider\": \"anthropic\", \"mode\": \"api_key\"}" ; GATEWAY_AUTH_PROFILE_KEY="anthropic:default" ; GATEWAY_AUTH_PROVIDER="anthropic" ; GATEWAY_AUTH_MODE="api_key" ;;
         ollama)    GATEWAY_AUTH_PROFILE="\"ollama:default\": {\"provider\": \"ollama\", \"mode\": \"api_key\"}"    ; GATEWAY_AUTH_PROFILE_KEY="ollama:default"    ; GATEWAY_AUTH_PROVIDER="ollama"    ; GATEWAY_AUTH_MODE="api_key" ;;
@@ -975,11 +975,12 @@ with open(config_path) as f:
 # Gateway mode
 config.setdefault('gateway', {})['mode'] = 'local'
 
-# Auth profile
-auth = config.setdefault('auth', {})
-profiles = auth.setdefault('profiles', {})
-if '$GATEWAY_AUTH_PROFILE_KEY' and '$GATEWAY_AUTH_PROFILE_KEY' not in profiles:
-    profiles['$GATEWAY_AUTH_PROFILE_KEY'] = {'provider': '$GATEWAY_AUTH_PROVIDER', 'mode': '$GATEWAY_AUTH_MODE'}
+# Auth profile (skip for vertex — uses ADC auto-detection)
+if '$GATEWAY_AUTH_PROFILE_KEY':
+    auth = config.setdefault('auth', {})
+    profiles = auth.setdefault('profiles', {})
+    if '$GATEWAY_AUTH_PROFILE_KEY' not in profiles:
+        profiles['$GATEWAY_AUTH_PROFILE_KEY'] = {'provider': '$GATEWAY_AUTH_PROVIDER', 'mode': '$GATEWAY_AUTH_MODE'}
 
 # Agents
 agents = config.setdefault('agents', {})
@@ -987,6 +988,25 @@ defaults = agents.setdefault('defaults', {})
 defaults['model'] = {'primary': '$GATEWAY_MODEL'}
 if not agents.get('list'):
     agents['list'] = [{'id': 'main', 'model': '$GATEWAY_MODEL'}]
+else:
+    agents['list'][0]['model'] = '$GATEWAY_MODEL'
+
+# GCP env vars for Vertex AI
+if '$AI_PROVIDER' == 'vertex':
+    env = config.setdefault('env', {})
+    env_vars = env.setdefault('vars', {})
+    if '$GCP_PROJECT':
+        env_vars['GOOGLE_CLOUD_PROJECT'] = '$GCP_PROJECT'
+    if '${GCP_REGION:-us-east5}':
+        env_vars['GOOGLE_CLOUD_LOCATION'] = '${GCP_REGION:-us-east5}'
+
+# Plugin allowlist (only load what we need)
+plugins = config.setdefault('plugins', {})
+if 'allow' not in plugins:
+    plugins['allow'] = [
+        'google', 'anthropic-vertex', 'acpx', 'openclaw-honcho',
+        'memory-core', 'diffs', 'browser', 'slack',
+    ]
 
 # QMD memory
 if 'qmd' not in config.get('memory', {}):
