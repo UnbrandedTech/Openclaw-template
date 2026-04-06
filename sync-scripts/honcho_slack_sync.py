@@ -29,6 +29,38 @@ CHANNELS_META = MESSAGES_DIR / "_channels.json"
 BATCH_SIZE = 100  # Honcho max per request
 PEER_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
+# Slack markup patterns
+_USER_MENTION = re.compile(r"<@([A-Z0-9]+)>")
+_CHANNEL_MENTION = re.compile(r"<#[A-Z0-9]+\|([^>]+)>")
+_CHANNEL_MENTION_NOLABEL = re.compile(r"<#([A-Z0-9]+)>")
+_URL_LABEL = re.compile(r"<(https?://[^|>]+)\|([^>]+)>")
+_URL_BARE = re.compile(r"<(https?://[^>]+)>")
+_SUBTEAM = re.compile(r"<!subteam\^[A-Z0-9]+(?:\|([^>]+))?>")
+_SPECIAL = re.compile(r"<!(\w+)(?:\|([^>]+))?>")
+
+
+def resolve_mentions(text: str, user_cache: dict) -> str:
+    """Replace Slack markup with human-readable names.
+
+    <@U12345>           -> @DisplayName
+    <#C12345|general>   -> #general
+    <https://...|label> -> label (https://...)
+    <!subteam^S12345>   -> @group
+    """
+    def replace_user(m):
+        uid = m.group(1)
+        name = user_cache.get(uid, uid)
+        return f"@{name}"
+
+    text = _USER_MENTION.sub(replace_user, text)
+    text = _CHANNEL_MENTION.sub(r"#\1", text)
+    text = _CHANNEL_MENTION_NOLABEL.sub(r"#\1", text)
+    text = _URL_LABEL.sub(r"\2 (\1)", text)
+    text = _URL_BARE.sub(r"\1", text)
+    text = _SUBTEAM.sub(lambda m: f"@{m.group(1) or 'group'}", text)
+    text = _SPECIAL.sub(lambda m: f"@{m.group(2) or m.group(1)}", text)
+    return text
+
 
 def sanitize_peer_id(slack_uid: str) -> str:
     """Convert Slack user ID to a valid Honcho peer ID."""
@@ -218,6 +250,7 @@ def main():
                 text = m.get("text", "")
                 if not text:
                     continue
+                text = resolve_mentions(text, user_cache)
 
                 peer = get_or_create_peer(uid)
                 msg_meta = {"slack_ts": m.get("ts", "")}
