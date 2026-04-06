@@ -13,6 +13,7 @@ cd Openclaw-template
 ./setup.sh --no-wizard  # Plain text prompts (no gum)
 ./setup.sh --from 7     # Restart from a specific phase (e.g., redo AI provider)
 ./uninstall.sh          # Remove OpenClaw (workspace, cron jobs, keychain entries)
+./scripts/rebuild_honcho.sh  # Wipe Honcho DB and rebuild from local exports
 ```
 
 ## What It Does
@@ -110,6 +111,7 @@ scripts/                          # One-time setup scripts
   setup_email.sh                  # Email (gogcli or IMAP) + calendar (Google or CalDAV) setup
   setup_obsidian.sh               # Vault directory structure
   setup_crons.sh                  # Register cron jobs with OpenClaw
+  rebuild_honcho.sh               # Drop + rebuild Honcho from local exports
   install_deps.sh installs gum    # TUI toolkit for the wizard (optional)
 
 sync-scripts/                     # Python scripts (run on cron + during setup)
