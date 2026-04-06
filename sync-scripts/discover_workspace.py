@@ -117,13 +117,9 @@ def discover_bots_from_api(token: str) -> dict:
     except SlackApiError as e:
         print(f"  Slack API error: {e.response.get('error', 'unknown')}")
 
-    # Determine the primary (internal) email domain
-    domain_counts = {}
-    for p in user_profiles.values():
-        d = p.get("email_domain", "")
-        if d and not p.get("is_guest"):
-            domain_counts[d] = domain_counts.get(d, 0) + 1
-    internal_domain = max(domain_counts, key=domain_counts.get) if domain_counts else ""
+    # Get internal domain from user.json email (authoritative source)
+    from shared import USER_EMAIL
+    internal_domain = USER_EMAIL.split("@")[1] if "@" in USER_EMAIL else ""
 
     # Tag each user as internal or external
     # Key insight: Slack guest users (is_restricted/is_ultra_restricted) are external.

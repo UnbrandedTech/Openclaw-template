@@ -1018,8 +1018,9 @@ echo ""
 wizard_input "What's your name? (e.g., Jane Doe)" "Jane Doe"
 USER_NAME="$REPLY"
 
-wizard_input "What's your first name?" "Jane"
-USER_FIRST="$REPLY"
+# Derive first name from full name
+USER_FIRST="${USER_NAME%% *}"
+log "First name: $USER_FIRST"
 
 DETECTED_TZ=""
 if [ "$PLATFORM" = "macos" ]; then
@@ -1049,6 +1050,9 @@ USER_EMAIL="$REPLY"
 wizard_input "Your Slack user ID? (e.g., UXXXXXXXXXX, press Enter to skip)" "UXXXXXXXXXX"
 USER_SLACK_ID="$REPLY"
 
+wizard_input "Your Slack username? (e.g., jdoe, press Enter to skip)" "jdoe"
+SLACK_USERNAME="$REPLY"
+
 wizard_input "Your title/role? (press Enter to skip)" "CTO"
 USER_TITLE="$REPLY"
 
@@ -1056,8 +1060,11 @@ wizard_input "Company name? (press Enter to skip)" "Acme Corp"
 USER_COMPANY="$REPLY"
 
 SYNC_GITHUB=false
+GITHUB_USERNAME=""
 if wizard_confirm "Do you use GitHub for work?"; then
     SYNC_GITHUB=true
+    wizard_input "GitHub username?" "jdoe"
+    GITHUB_USERNAME="$REPLY"
 fi
 
 SERVICES_BIZ=false
@@ -1082,9 +1089,19 @@ if [ -n "$USER_EMAIL" ]; then
 fi
 
 # Build name keywords for Slack mention detection (lowercase variants)
+# Build name keywords for Slack mention detection
 FIRST_LOWER=$(echo "$USER_FIRST" | tr '[:upper:]' '[:lower:]')
 LAST_LOWER=$(echo "$USER_NAME" | awk '{print $NF}' | tr '[:upper:]' '[:lower:]')
-NAME_KEYWORDS="[\"$FIRST_LOWER\", \"$LAST_LOWER\"]"
+NAME_KEYWORDS_ITEMS="\"$FIRST_LOWER\", \"$LAST_LOWER\""
+if [ -n "$SLACK_USERNAME" ]; then
+    SLACK_USER_LOWER=$(echo "$SLACK_USERNAME" | tr '[:upper:]' '[:lower:]')
+    NAME_KEYWORDS_ITEMS="$NAME_KEYWORDS_ITEMS, \"$SLACK_USER_LOWER\""
+fi
+if [ -n "$GITHUB_USERNAME" ]; then
+    GH_USER_LOWER=$(echo "$GITHUB_USERNAME" | tr '[:upper:]' '[:lower:]')
+    NAME_KEYWORDS_ITEMS="$NAME_KEYWORDS_ITEMS, \"$GH_USER_LOWER\""
+fi
+NAME_KEYWORDS="[$NAME_KEYWORDS_ITEMS]"
 
 # Write user.json for sync scripts
 cat > "$WORKSPACE/user.json" << USERJSON
@@ -1094,6 +1111,8 @@ cat > "$WORKSPACE/user.json" << USERJSON
   "email": "${USER_EMAIL:-}",
   "timezone": "${USER_TZ:-America/Denver}",
   "slack_user_id": "${USER_SLACK_ID:-}",
+  "slack_username": "${SLACK_USERNAME:-}",
+  "github_username": "${GITHUB_USERNAME:-}",
   "name_keywords": ${NAME_KEYWORDS},
   "title": "${USER_TITLE:-}",
   "company": "${USER_COMPANY:-}",
