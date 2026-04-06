@@ -146,43 +146,49 @@ def get_person_context(honcho, peer_id: str, person_name: str) -> str:
 
 
 def get_company_context(honcho, company_name: str, channels: list, contacts: list) -> str:
-    """Query Honcho for everything it knows about a client company.
+    """Gather context about a client company from their Slack channel messages.
 
-    Queries the company's Slack channel sessions rather than a company peer
-    (companies don't have Honcho peers, only people do).
+    Reads messages directly from the company's channel sessions and returns
+    them as raw context for the LLM to synthesize into a profile.
     """
-    agent_peer = honcho.peer("agent-main")
+    parts = []
 
     contact_hint = ""
     if contacts:
-        contact_hint = f" Key contacts: {', '.join(contacts)}."
+        contact_hint = f"Key contacts: {', '.join(contacts)}"
+        parts.append(f"## Known Contacts\n{contact_hint}")
 
-    prompt = (
-        f"Tell me everything you know about the company {company_name} and our relationship with them. "
-        f"Include: what they do, active projects or engagements we have with them, "
-        f"meeting cadence, Slack communication patterns, key decision makers, "
-        f"deliverables and timelines, relationship health, and any notable context.{contact_hint} "
-        f"Be specific. Skip anything you don't have data on."
-    )
-
-    # Try querying each channel session for this company
+    # Read messages from the company's Slack channel(s)
+    all_messages = []
     for ch in channels:
         session_id = f"slack-{ch}"
         try:
-            response = agent_peer.chat(prompt, session=session_id, reasoning_level="medium")
-            result = str(response).strip()
-            if result:
-                return result
+            session = honcho.session(session_id)
+            msgs = session.messages(page=1, size=50, reverse=True)
+            items = getattr(msgs, "items", msgs) if hasattr(msgs, "items") else []
+            for msg in items:
+                content = getattr(msg, "content", "")
+                if content and len(content) > 10:
+                    all_messages.append(content)
         except Exception:
             continue
 
-    # Fallback: query without a specific target/session
-    try:
-        response = agent_peer.chat(prompt, reasoning_level="medium")
-        return str(response).strip()
-    except Exception as e:
-        print(f"  warn: {company_name} honcho error: {e}", file=sys.stderr)
-        return ""
+    if all_messages:
+        # Truncate to fit in an LLM prompt
+        sample = []
+        total_chars = 0
+        for msg in all_messages:
+            if total_chars + len(msg) > 20000:
+                break
+            sample.append(msg)
+            total_chars += len(msg)
+        if sample:
+            parts.append(f"## Slack Channel Messages ({len(sample)} messages)\n" + "\n---\n".join(sample))
+
+    if not parts:
+        print(f"  warn: no channel data for {company_name}", file=sys.stderr)
+
+    return "\n\n".join(parts)
 
 
 # ── Dossier generation ────────────────────────────────────────────────────────
@@ -448,7 +454,9 @@ def main():
                 stats["clients_skipped"] += 1
                 continue
 
-            channels = company_info.get("channels", [])
+            # Handle both "channel" (string) and "channels" (list) formats
+            ch = company_info.get("channels", company_info.get("channel", []))
+            channels = [ch] if isinstance(ch, str) else ch
             contacts = company_info.get("contacts", [])
 
             print(f"  [{i}/{total_clients}] {company_name}... ", end="", flush=True)
