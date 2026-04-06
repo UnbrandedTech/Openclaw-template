@@ -105,11 +105,16 @@ if command -v psql &>/dev/null && psql -d postgres -lqt 2>/dev/null | cut -d \| 
     psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'honcho' AND pid <> pg_backend_pid();" &>/dev/null || true
     sleep 1
     log "done"
-    echo -n "  Wiping honcho database... "
-    psql -d honcho -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" &>/dev/null && log "wiped" || {
-        warn "schema wipe failed, trying dropdb..."
-        dropdb honcho 2>/dev/null && log "dropped" || warn "could not drop (may need: sudo -u postgres dropdb honcho)"
-    }
+    echo -n "  Wiping honcho tables (preserving extensions)... "
+    # Drop tables individually to preserve pgvector extension (needs superuser to recreate)
+    TABLES=$(psql -d honcho -t -c "SELECT tablename FROM pg_tables WHERE schemaname = 'public';" 2>/dev/null | tr -d ' ' | grep -v '^$')
+    if [ -n "$TABLES" ]; then
+        for table in $TABLES; do
+            psql -d honcho -c "DROP TABLE IF EXISTS public.\"$table\" CASCADE;" &>/dev/null
+        done
+    fi
+    psql -d honcho -c "DROP TABLE IF EXISTS alembic_version CASCADE;" &>/dev/null || true
+    log "wiped"
 fi
 
 # ── Remove vdirsyncer config ─────────────────────────────────────

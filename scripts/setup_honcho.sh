@@ -64,6 +64,32 @@ if [ "$HONCHO_OPTION" = "2" ]; then
         echo 'export OLLAMA_KEEP_ALIVE=24h' >> "$SHELL_RC"
     fi
 
+    # Run Honcho migrations if tables are missing (e.g., after uninstall)
+    HONCHO_DIR="${HONCHO_PROJECT_DIR:-$HOME/Projects/Personal/honcho}"
+    if [ -f "$HONCHO_DIR/alembic.ini" ]; then
+        TABLES=$(psql -d honcho -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | tr -d ' ')
+        if [ "${TABLES:-0}" -lt 5 ]; then
+            log "Running Honcho migrations..."
+            (cd "$HONCHO_DIR" && "$HONCHO_DIR/.venv/bin/alembic" upgrade heads 2>&1) || warn "Alembic migrations had errors"
+        fi
+    fi
+
+    # Start/restart Honcho server
+    if ! curl -s http://localhost:18790/ &>/dev/null; then
+        if [ -f "$HONCHO_DIR/src/main.py" ]; then
+            log "Starting Honcho server..."
+            (cd "$HONCHO_DIR" && "$HONCHO_DIR/.venv/bin/fastapi" run src/main.py --port 18790 --host 127.0.0.1 &>/dev/null &)
+            sleep 3
+            if curl -s http://localhost:18790/ &>/dev/null; then
+                log "Honcho server started"
+            else
+                warn "Honcho server may not have started — check manually"
+            fi
+        fi
+    else
+        log "Honcho server already running"
+    fi
+
     log "Self-hosted Honcho ready (localhost:18790)"
 else
     warn "Cloud Honcho selected. Sign up at honcho.dev and add your API key to the config."
