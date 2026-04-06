@@ -905,11 +905,11 @@ if [ ! -f "$OPENCLAW_DIR/openclaw.json" ]; then
     GATEWAY_MODEL="$FAST_MODEL"
 
     case "$AI_PROVIDER" in
-        vertex)    GATEWAY_AUTH_PROFILE="\"vertex:default\": {\"provider\": \"vertex\", \"mode\": \"oauth\"}" ;;
-        openai)    GATEWAY_AUTH_PROFILE="\"openai:default\": {\"provider\": \"openai\", \"mode\": \"api_key\"}" ;;
-        anthropic) GATEWAY_AUTH_PROFILE="\"anthropic:default\": {\"provider\": \"anthropic\", \"mode\": \"api_key\"}" ;;
-        ollama)    GATEWAY_AUTH_PROFILE="\"ollama:default\": {\"provider\": \"ollama\", \"mode\": \"api_key\"}" ;;
-        bedrock)   GATEWAY_AUTH_PROFILE="\"bedrock:default\": {\"provider\": \"bedrock\", \"mode\": \"oauth\"}" ;;
+        vertex)    GATEWAY_AUTH_PROFILE="\"vertex:default\": {\"provider\": \"vertex\", \"mode\": \"oauth\"}"    ; GATEWAY_AUTH_PROFILE_KEY="vertex:default"    ; GATEWAY_AUTH_PROVIDER="vertex"    ; GATEWAY_AUTH_MODE="oauth" ;;
+        openai)    GATEWAY_AUTH_PROFILE="\"openai:default\": {\"provider\": \"openai\", \"mode\": \"api_key\"}"    ; GATEWAY_AUTH_PROFILE_KEY="openai:default"    ; GATEWAY_AUTH_PROVIDER="openai"    ; GATEWAY_AUTH_MODE="api_key" ;;
+        anthropic) GATEWAY_AUTH_PROFILE="\"anthropic:default\": {\"provider\": \"anthropic\", \"mode\": \"api_key\"}" ; GATEWAY_AUTH_PROFILE_KEY="anthropic:default" ; GATEWAY_AUTH_PROVIDER="anthropic" ; GATEWAY_AUTH_MODE="api_key" ;;
+        ollama)    GATEWAY_AUTH_PROFILE="\"ollama:default\": {\"provider\": \"ollama\", \"mode\": \"api_key\"}"    ; GATEWAY_AUTH_PROFILE_KEY="ollama:default"    ; GATEWAY_AUTH_PROVIDER="ollama"    ; GATEWAY_AUTH_MODE="api_key" ;;
+        bedrock)   GATEWAY_AUTH_PROFILE="\"bedrock:default\": {\"provider\": \"bedrock\", \"mode\": \"oauth\"}"    ; GATEWAY_AUTH_PROFILE_KEY="bedrock:default"   ; GATEWAY_AUTH_PROVIDER="bedrock"   ; GATEWAY_AUTH_MODE="oauth" ;;
     esac
 
     VAULT_PATH_ESCAPED="${OBSIDIAN_VAULT:-$HOME/Documents/Obsidian Vault}"
@@ -964,29 +964,44 @@ else
     log "openclaw.json exists"
 fi
 
-# Always ensure gateway.mode and QMD config are set
-# (plugin installs can rewrite openclaw.json and strip these)
+# Always ensure our config fields survive plugin installs that rewrite openclaw.json
 VAULT_PATH_ESCAPED="${OBSIDIAN_VAULT:-$HOME/Documents/Obsidian Vault}"
 python3 -c "
 import json
 config_path = '$OPENCLAW_DIR/openclaw.json'
 with open(config_path) as f:
     config = json.load(f)
+
+# Gateway mode
 config.setdefault('gateway', {})['mode'] = 'local'
+
+# Auth profile
+auth = config.setdefault('auth', {})
+profiles = auth.setdefault('profiles', {})
+if '$GATEWAY_AUTH_PROFILE_KEY' and '$GATEWAY_AUTH_PROFILE_KEY' not in profiles:
+    profiles['$GATEWAY_AUTH_PROFILE_KEY'] = {'provider': '$GATEWAY_AUTH_PROVIDER', 'mode': '$GATEWAY_AUTH_MODE'}
+
+# Agents
+agents = config.setdefault('agents', {})
+defaults = agents.setdefault('defaults', {})
+defaults['model'] = {'primary': '$GATEWAY_MODEL'}
+if not agents.get('list'):
+    agents['list'] = [{'id': 'main', 'model': '$GATEWAY_MODEL'}]
+
+# QMD memory
 if 'qmd' not in config.get('memory', {}):
-    qmd_available = True  # assume yes, harmless if not
-    if qmd_available:
-        config['memory'] = {
-            'backend': 'qmd',
-            'qmd': {
-                'paths': [
-                    {'name': 'vault-people', 'path': '$VAULT_PATH_ESCAPED/People', 'pattern': '**/*.md'},
-                    {'name': 'vault-clients', 'path': '$VAULT_PATH_ESCAPED/Clients', 'pattern': '**/*.md'},
-                    {'name': 'transcripts', 'path': '$WORKSPACE/transcriptions', 'pattern': '**/*.txt'},
-                ],
-                'sessions': {'enabled': True},
-            },
-        }
+    config['memory'] = {
+        'backend': 'qmd',
+        'qmd': {
+            'paths': [
+                {'name': 'vault-people', 'path': '$VAULT_PATH_ESCAPED/People', 'pattern': '**/*.md'},
+                {'name': 'vault-clients', 'path': '$VAULT_PATH_ESCAPED/Clients', 'pattern': '**/*.md'},
+                {'name': 'transcripts', 'path': '$WORKSPACE/transcriptions', 'pattern': '**/*.txt'},
+            ],
+            'sessions': {'enabled': True},
+        },
+    }
+
 with open(config_path, 'w') as f:
     json.dump(config, f, indent=2)
 " 2>/dev/null
