@@ -89,11 +89,10 @@ if command -v psql &>/dev/null && psql -d postgres -lqt 2>/dev/null | cut -d \| 
     # Wipe all data by dropping and recreating the public schema
     # (avoids needing CREATEDB privilege to drop/recreate the whole database)
     log "Wiping honcho data..."
-    psql -d honcho -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || {
-        err "Could not wipe database. Trying full drop..."
-        dropdb honcho 2>/dev/null && createdb honcho 2>/dev/null || { err "Database reset failed"; exit 1; }
-        psql -d honcho -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
-    }
+    psql -d honcho -c "DROP SCHEMA public CASCADE;" 2>/dev/null || { err "DROP SCHEMA failed"; exit 1; }
+    psql -d honcho -c "CREATE SCHEMA public;" 2>/dev/null || { err "CREATE SCHEMA failed"; exit 1; }
+    # vector extension is optional — Honcho creates it if needed
+    psql -d honcho -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || warn "pgvector extension not available (Honcho will work without it)"
     log "Database wiped"
 else
     # Database doesn't exist, try to create it
