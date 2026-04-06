@@ -387,15 +387,26 @@ def main():
             print(f"  [{i}/{total_people}] {person_name}... ", end="", flush=True)
 
             # Resolve the Honcho peer_id — team.json uses sanitized full name
-            # but Honcho peers may use sanitized display name (which can differ)
+            # but Honcho peers may use sanitized display name (which can differ).
+            # Try multiple variants: UID-resolved, first name, full name, raw peer_id.
             peer_id = info["peer_id"]
             slack_uid = info.get("slack_uid", "")
-            if slack_uid and slack_uid in uid_to_peer_id:
-                resolved = uid_to_peer_id[slack_uid]
-                if resolved != peer_id:
-                    peer_id = resolved
 
-            context = get_person_context(honcho, peer_id, person_name)
+            candidates = [peer_id]
+            if slack_uid and slack_uid in uid_to_peer_id:
+                candidates.insert(0, uid_to_peer_id[slack_uid])
+            # Try first name only (e.g., "preston" for "Preston Rutherford")
+            first_name_id = sanitize_id(person_name.split()[0]) if person_name else ""
+            if first_name_id and first_name_id not in candidates:
+                candidates.append(first_name_id)
+
+            context = ""
+            for candidate in candidates:
+                context = get_person_context(honcho, candidate, person_name)
+                if context.strip():
+                    if candidate != peer_id:
+                        print(f"[resolved {peer_id}->{candidate}] ", end="", flush=True)
+                    break
 
             if not context:
                 print("no data, skipping")

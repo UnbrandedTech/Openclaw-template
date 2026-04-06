@@ -434,11 +434,16 @@ def parse_sonnet_response(response_text: str) -> dict:
 def deduplicate_people(people: dict) -> dict:
     """Remove likely duplicate entries from tracked_people.
 
-    Detects when a username-style entry (e.g., "Tgreene Montgomery") shares
-    a last name with a proper-name entry (e.g., "Tom Montgomery") and drops
-    the username variant.
+    Detects duplicates via:
+    1. Username-style entry shares a last name with a proper-name entry
+       (e.g., "Tgreene Montgomery" vs "Tom Montgomery")
+    2. Single-word entry (likely a Slack username) matches a first name of a
+       multi-word entry (e.g., "prestonr2" when "Preston Rutherford" exists)
+    3. Entries that share the same Slack UID
     """
-    # Build index: last_name -> list of (name, has_space)
+    to_remove = set()
+
+    # Strategy 1: last-name matching (username vs real name)
     by_last = {}
     for name in people:
         parts = name.split()
@@ -446,21 +451,43 @@ def deduplicate_people(people: dict) -> dict:
             last = parts[-1].lower()
             by_last.setdefault(last, []).append(name)
 
-    to_remove = set()
     for last, names in by_last.items():
         if len(names) <= 1:
             continue
-        # Prefer entries where first name looks like a real name (not a username)
-        real_names = [n for n in names if not any(c.isdigit() for c in n.split()[0]) and n.split()[0][0].isupper()]
+        real_names = [n for n in names if len(n.split()) >= 2 and n.split()[0][0].isupper()]
         username_names = [n for n in names if n not in real_names]
         if real_names and username_names:
             for dup in username_names:
                 to_remove.add(dup)
 
+    # Strategy 2: single-word usernames that match a first name
+    multi_word = {n: n.split()[0].lower() for n in people if len(n.split()) >= 2}
+    single_word = [n for n in people if " " not in n and not n[0].isupper()]
+    for username in single_word:
+        uname_lower = username.lower()
+        for full_name, first_lower in multi_word.items():
+            # "prestonr2" starts with "preston" (first name of "Preston Rutherford")
+            if uname_lower.startswith(first_lower) and len(first_lower) >= 3:
+                to_remove.add(username)
+                break
+
+    # Strategy 3: same Slack UID
+    by_uid = {}
+    for name, info in people.items():
+        uid = info.get("slack_uid", "")
+        if uid:
+            by_uid.setdefault(uid, []).append(name)
+    for uid, names in by_uid.items():
+        if len(names) > 1:
+            # Keep the multi-word name (more informative)
+            names.sort(key=lambda n: (-len(n.split()), n))
+            for dup in names[1:]:
+                to_remove.add(dup)
+
     if to_remove:
         cleaned = {k: v for k, v in people.items() if k not in to_remove}
-        for name in to_remove:
-            print(f"  Dedup: removed '{name}' (duplicate of another {name.split()[-1]})")
+        for name in sorted(to_remove):
+            print(f"  Dedup: removed '{name}'")
         return cleaned
     return people
 

@@ -81,6 +81,17 @@ Report only errors or notable action items found." \
     --timeout 600 \
     --delivery none 2>/dev/null && log "Created eod" || warn "eod may already exist"
 
+# Weekly dossier rebuild (Sunday 9pm — regenerates all dossiers with latest Honcho data)
+openclaw cron add \
+    --name "weekly-dossier-rebuild" \
+    --cron "0 21 * * 0" \
+    --tz "America/Denver" \
+    --model "$FAST_MODEL" \
+    --message "Weekly dossier rebuild. Run: \`$PYTHON $SCRIPTS/generate_initial_dossiers.py --type all --priority all --force\`
+Report the summary line (people written, clients written, errors)." \
+    --timeout 900 \
+    --delivery none 2>/dev/null && log "Created weekly-dossier-rebuild" || warn "weekly-dossier-rebuild may already exist"
+
 log "All cron jobs created"
 echo ""
 echo "Verify with: openclaw cron list"
