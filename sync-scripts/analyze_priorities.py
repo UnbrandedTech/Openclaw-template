@@ -352,6 +352,7 @@ Produce your output as JSON wrapped in ```json blocks. The JSON should have this
       "priority": "high|medium|low",
       "slack_uid": "U...",
       "email": "person@example.com",
+      "emails": ["person@example.com", "person@personal.com"],
       "company": "Company Name",
       "reason": "Brief explanation of why this priority level"
     }}
@@ -385,7 +386,7 @@ Rules:
 - `priority_channels`: The top 5-10 channels that matter most for the user's work.
 - `deep_reconcile_peers`: The top 5 most important people (peer_id -> display name) who warrant deep context tracking.
 - `client_channel_prefix`: If you detect a common prefix pattern for client channels, include it. Otherwise empty string.
-- For each person in tracked_people, include their email if available from calendar data.
+- For each person, include ALL known emails in the "emails" array. People often use both work and personal emails (e.g., ["p@company.com", "person@gmail.com"]). Set "email" to the primary/work email.
 - Match people across data sources by name (Slack name may differ slightly from calendar name — use best judgment).
 
 Return ONLY the JSON block, no other text before or after it.
@@ -536,8 +537,9 @@ def build_aliases(people: dict) -> dict:
     multiple peer IDs when looking up Honcho data:
       - peer_id (sanitized full name)
       - Slack display name (sanitized, may differ from full name)
-      - Slack username (from DM channel names)
       - First name only
+      - Email-derived IDs (local part of each email)
+    Also consolidates all known emails into an "emails" array.
     """
     from shared import sanitize_id
 
@@ -548,10 +550,18 @@ def build_aliases(people: dict) -> dict:
         if not uid.startswith("_") and isinstance(name, str):
             uid_to_display[uid] = name
 
+    # Load calendar attendees to find additional emails for the same person
+    attendees = load_json(WORKSPACE / "calendar_attendees.json")
+
     for name, info in people.items():
         existing_aliases = set(info.get("aliases", []))
+        emails = set()
         peer_id = info.get("peer_id", "")
         slack_uid = info.get("slack_uid", "")
+
+        # Collect known email
+        if info.get("email"):
+            emails.add(info["email"].lower())
 
         # Always include the canonical peer_id
         if peer_id:
@@ -570,12 +580,48 @@ def build_aliases(people: dict) -> dict:
         if first_id and len(first_id) >= 3:
             existing_aliases.add(first_id)
 
-        # Add the full name sanitized (in case peer_id was set differently)
+        # Add the full name sanitized
         name_id = sanitize_id(name)
         if name_id:
             existing_aliases.add(name_id)
 
+        # Match calendar attendees by name/alias to find additional emails
+        name_lower = name.lower()
+        first_lower = first.lower() if first else ""
+        # Run two passes: first by name, then by email local part matching aliases
+        for _pass in range(2):
+            for email, att_info in attendees.items():
+                if email.lower() in emails:
+                    continue
+                if not isinstance(att_info, dict):
+                    continue
+                att_name = att_info.get("name", "").lower()
+                local = email.split("@")[0].lower() if "@" in email else ""
+                local_id = sanitize_id(local) if local else ""
+
+                matched = False
+                if _pass == 0:
+                    # Pass 1: match by name
+                    matched = (
+                        att_name == name_lower
+                        or (first_lower and att_name == first_lower)
+                        or (first_lower and att_name.startswith(first_lower + " "))
+                    )
+                else:
+                    # Pass 2: match by email local part against known aliases
+                    # (catches prestonr2@gmail.com when "preston" is an alias)
+                    matched = (
+                        local_id in existing_aliases
+                        or any(local.startswith(a) and len(a) >= 3 for a in existing_aliases)
+                    )
+
+                if matched:
+                    emails.add(email.lower())
+                    if local_id and len(local_id) >= 3:
+                        existing_aliases.add(local_id)
+
         info["aliases"] = sorted(existing_aliases)
+        info["emails"] = sorted(emails) if emails else info.get("emails", [])
 
     return people
 
