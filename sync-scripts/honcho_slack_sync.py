@@ -153,7 +153,9 @@ def main():
         # Process each channel
         total_sent = 0
         errors = 0
-        for ch_name, msgs in channels_to_sync.items():
+        total_channels = len(channels_to_sync)
+        for ch_idx, (ch_name, msgs) in enumerate(channels_to_sync.items(), 1):
+            print(f"  [{ch_idx}/{total_channels}] #{ch_name} ({len(msgs)} msgs)... ", end="", flush=True)
             # Build session metadata from channel info
             ch_id = msgs[0].get("_channel_id", "")
             meta_entry = channel_meta.get(ch_id, {})
@@ -237,10 +239,10 @@ def main():
                         if i + BATCH_SIZE < len(honcho_msgs):
                             time.sleep(0.5)
                     total_sent += sent
-                    print(f"  #{ch_name}: +{sent} messages")
+                    print(f"sent {sent}")
                 except Exception as e:
                     errors += 1
-                    print(f"  #{ch_name}: ERROR sending messages: {e}")
+                    print(f"ERROR: {e}")
 
             # Update sync state for this channel
             max_synced_at = max(m.get("_synced_at", 0) for m in msgs)

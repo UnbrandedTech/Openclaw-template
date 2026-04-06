@@ -1100,9 +1100,11 @@ if [ "$SYNC_NOW" = true ]; then
 
     wizard_spin "Refreshing calendar" "$HOME/.openclaw/venv/bin/vdirsyncer" sync || warn "Calendar sync had errors"
 
-    wizard_spin "Syncing Slack messages (3 months)" "$VENV_PYTHON" "$WORKSPACE/scripts/slack_sync.py" --hours 2160 --skip-threads || warn "Slack sync had errors"
+    log "Syncing Slack messages (3 months)..."
+    "$VENV_PYTHON" "$WORKSPACE/scripts/slack_sync.py" --hours 2160 --skip-threads 2>&1 | tee -a "$SETUP_LOG" || warn "Slack sync had errors"
 
-    wizard_spin "Downloading meeting transcripts" "$VENV_PYTHON" "$WORKSPACE/scripts/sync_meeting_transcripts.py" --full --skip-actions || warn "Transcript sync had errors"
+    log "Downloading meeting transcripts..."
+    "$VENV_PYTHON" "$WORKSPACE/scripts/sync_meeting_transcripts.py" --full --skip-actions 2>&1 | tee -a "$SETUP_LOG" || warn "Transcript sync had errors"
 
     wizard_spin "Parsing calendar events (30 days)" "$VENV_PYTHON" "$WORKSPACE/scripts/sync_calendar.py" --days 30 || warn "Calendar parse had errors"
 
@@ -1126,7 +1128,8 @@ if [ "$SYNC_NOW" = true ]; then
         echo ""
     fi
 
-    wizard_spin "Loading Slack messages" "$VENV_PYTHON" "$WORKSPACE/scripts/honcho_slack_sync.py" || warn "Honcho Slack sync had errors"
+    log "Loading Slack messages into Honcho..."
+    "$VENV_PYTHON" "$WORKSPACE/scripts/honcho_slack_sync.py" 2>&1 | tee -a "$SETUP_LOG" || warn "Honcho Slack sync had errors"
 
     wizard_spin "Loading transcripts, calendar, and GitHub data" "$VENV_PYTHON" "$WORKSPACE/scripts/load_to_honcho.py" || warn "Honcho data load had errors"
 
@@ -1141,7 +1144,8 @@ if [ "$SYNC_NOW" = true ]; then
     if [ "$SERVICES_BIZ" = true ]; then
         ANALYZE_FLAGS="--services-business"
     fi
-    wizard_spin "Analyzing priorities" "$VENV_PYTHON" "$WORKSPACE/scripts/analyze_priorities.py" $ANALYZE_FLAGS || warn "Priority analysis had errors"
+    log "Analyzing priorities..."
+    "$VENV_PYTHON" "$WORKSPACE/scripts/analyze_priorities.py" $ANALYZE_FLAGS 2>&1 | tee -a "$SETUP_LOG" || warn "Priority analysis had errors"
 
     # ── Step 5: Generate dossiers + client profiles ──────────────────
     step "Step 5/5: Generating dossiers"
@@ -1150,7 +1154,8 @@ if [ "$SYNC_NOW" = true ]; then
         echo ""
     fi
 
-    wizard_spin "Generating dossiers" "$VENV_PYTHON" "$WORKSPACE/scripts/generate_initial_dossiers.py" --type all --priority all || warn "Dossier generation had errors"
+    log "Generating dossiers..."
+    "$VENV_PYTHON" "$WORKSPACE/scripts/generate_initial_dossiers.py" --type all --priority all 2>&1 | tee -a "$SETUP_LOG" || warn "Dossier generation had errors"
 
     log "Workspace sync complete!"
     log "Review your team config:    ~/.openclaw/workspace/team.json"

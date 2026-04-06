@@ -270,74 +270,84 @@ def main():
                         "company": company_name,
                     }
 
-        print(f"\n--- Generating person dossiers ({len(people_to_process)} people) ---\n")
+        total_people = len(people_to_process)
+        print(f"\n--- Generating person dossiers ({total_people} people) ---\n")
 
-        for person_name, entry in people_to_process.items():
+        for i, (person_name, entry) in enumerate(people_to_process.items(), 1):
             info = entry["info"]
             company = entry["company"]
             md_path = PEOPLE_DIR / f"{person_name}.md"
 
             if md_path.exists() and not args.force:
-                print(f"  skip (exists): {person_name}")
+                print(f"  [{i}/{total_people}] skip (exists): {person_name}")
                 stats["people_skipped"] += 1
                 continue
 
-            print(f"  querying Honcho for {person_name}...")
+            print(f"  [{i}/{total_people}] {person_name}... ", end="", flush=True)
             context = get_person_context(honcho, info["peer_id"], person_name)
 
             if not context:
-                print(f"  warn: no Honcho context for {person_name}, skipping", file=sys.stderr)
+                print("no data, skipping")
                 stats["errors"] += 1
                 continue
 
-            prompt = build_person_prompt(person_name, info, context, template, company=company)
-            print(f"  calling fast model for {person_name}...")
-            content = call_llm(prompt, role="fast")
+            content = call_llm(
+                build_person_prompt(person_name, info, context, template, company=company),
+                role="fast",
+            )
 
             if not content:
-                print(f"  warn: LLM returned empty for {person_name}", file=sys.stderr)
+                print("LLM returned empty")
                 stats["errors"] += 1
                 continue
 
             if write_dossier(md_path, content, dry_run=args.dry_run):
                 stats["people_written"] += 1
+                print("done")
+            else:
+                print("write failed")
 
             time.sleep(RATE_LIMIT_SECONDS)
 
     # ── Generate client company profiles ───────────────────────────────────
     if args.gen_type in ("clients", "all"):
-        print(f"\n--- Generating client profiles ({len(clients)} clients) ---\n")
+        total_clients = len(clients)
+        print(f"\n--- Generating client profiles ({total_clients} clients) ---\n")
 
-        for company_name, company_info in clients.items():
+        for i, (company_name, company_info) in enumerate(clients.items(), 1):
             md_path = CLIENTS_DIR / f"{company_name}.md"
 
             if md_path.exists() and not args.force:
-                print(f"  skip (exists): {company_name}")
+                print(f"  [{i}/{total_clients}] skip (exists): {company_name}")
                 stats["clients_skipped"] += 1
                 continue
 
             channels = company_info.get("channels", [])
             contacts = company_info.get("contacts", [])
 
-            print(f"  querying Honcho for {company_name}...")
+            print(f"  [{i}/{total_clients}] {company_name}... ", end="", flush=True)
             context = get_company_context(honcho, company_name, channels, contacts)
 
             if not context:
-                print(f"  warn: no Honcho context for {company_name}, skipping", file=sys.stderr)
+                print("no data, skipping")
                 stats["errors"] += 1
                 continue
 
-            prompt = build_company_prompt(company_name, company_info, context)
-            print(f"  calling fast model for {company_name}...")
-            content = call_llm(prompt, role="fast")
+            content = call_llm(
+                build_company_prompt(company_name, company_info, context),
+                role="fast",
+            )
 
             if not content:
-                print(f"  warn: LLM returned empty for {company_name}", file=sys.stderr)
+                print("LLM returned empty")
                 stats["errors"] += 1
                 continue
 
             if write_dossier(md_path, content, dry_run=args.dry_run):
                 stats["clients_written"] += 1
+                print("done")
+            else:
+                print("write failed")
 
             time.sleep(RATE_LIMIT_SECONDS)
 
