@@ -27,6 +27,7 @@ from shared import (
     get_honcho,
     load_json,
     call_llm,
+    check_llm_ready,
     sanitize_id,
     USER_NAME,
     USER_TITLE,
@@ -320,6 +321,9 @@ def main():
         help="Preview what would be generated without writing files",
     )
     args = parser.parse_args()
+
+    if not args.dry_run:
+        check_llm_ready()
 
     team = load_json(TEAM_JSON_PATH)
     tracked_people = team.get("tracked_people", {})

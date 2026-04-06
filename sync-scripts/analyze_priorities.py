@@ -33,6 +33,7 @@ from shared import (
     load_json,
     save_json,
     call_llm,
+    check_llm_ready,
     USER_NAME,
     USER_TITLE,
     USER_COMPANY,
@@ -602,6 +603,9 @@ def main():
         help="Emphasize client company detection (for consulting/services businesses)",
     )
     args = parser.parse_args()
+
+    if not args.dry_run:
+        check_llm_ready()
 
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Analyzing workspace priorities...")
     print(f"  User: {USER_NAME or '(not set)'} | {USER_TITLE or '(no title)'} @ {USER_COMPANY or '(no company)'}")
