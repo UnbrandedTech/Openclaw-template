@@ -985,20 +985,31 @@ if '$GATEWAY_AUTH_PROFILE_KEY':
 # Agents
 agents = config.setdefault('agents', {})
 defaults = agents.setdefault('defaults', {})
-defaults['model'] = {'primary': '$GATEWAY_MODEL'}
-if not agents.get('list'):
-    agents['list'] = [{'id': 'main', 'model': '$GATEWAY_MODEL'}]
-else:
-    agents['list'][0]['model'] = '$GATEWAY_MODEL'
-
-# GCP env vars for Vertex AI
+model_config = {'primary': '$GATEWAY_MODEL'}
 if '$AI_PROVIDER' == 'vertex':
+    model_config['fallbacks'] = [
+        'google-vertex/gemini-2.5-pro',
+        'anthropic-vertex/claude-sonnet-4-6',
+    ]
+defaults['model'] = model_config
+agent_entry = {'id': 'main', 'model': model_config}
+if not agents.get('list'):
+    agents['list'] = [agent_entry]
+else:
+    agents['list'][0]['model'] = model_config
+
+# GCP env vars for Vertex AI (both Google and Anthropic providers need these)
+if '$AI_PROVIDER' == 'vertex':
+    import os
     env = config.setdefault('env', {})
     env_vars = env.setdefault('vars', {})
-    if '$GCP_PROJECT':
-        env_vars['GOOGLE_CLOUD_PROJECT'] = '$GCP_PROJECT'
-    if '${GCP_REGION:-us-east5}':
-        env_vars['GOOGLE_CLOUD_LOCATION'] = '${GCP_REGION:-us-east5}'
+    env_vars['GOOGLE_CLOUD_PROJECT'] = '$GCP_PROJECT'
+    env_vars['GOOGLE_CLOUD_LOCATION'] = '${GCP_REGION:-us-east5}'
+    env_vars['ANTHROPIC_VERTEX_PROJECT_ID'] = '$GCP_PROJECT'
+    env_vars['ANTHROPIC_VERTEX_REGION'] = '${GCP_REGION:-us-east5}'
+    adc_path = os.path.expanduser('~/.config/gcloud/application_default_credentials.json')
+    if os.path.exists(adc_path):
+        env_vars['GOOGLE_APPLICATION_CREDENTIALS'] = adc_path
 
 # Plugin allowlist (only load what we need)
 plugins = config.setdefault('plugins', {})
