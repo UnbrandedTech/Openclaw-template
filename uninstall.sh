@@ -99,10 +99,17 @@ for key in "${KEYCHAIN_KEYS[@]}"; do
 done
 log "removed"
 
-# ── Drop Honcho database ──────────────────────────────────────────
-if command -v psql &>/dev/null && psql -lqt 2>/dev/null | cut -d \| -f 1 | grep -qw honcho; then
-    echo -n "  Dropping honcho database... "
-    dropdb honcho 2>/dev/null && log "dropped" || warn "could not drop (may need sudo -u postgres)"
+# ── Wipe Honcho database ──────────────────────────────────────────
+if command -v psql &>/dev/null && psql -d postgres -lqt 2>/dev/null | cut -d \| -f 1 | grep -qw honcho; then
+    echo -n "  Terminating database connections... "
+    psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'honcho' AND pid <> pg_backend_pid();" &>/dev/null || true
+    sleep 1
+    log "done"
+    echo -n "  Wiping honcho database... "
+    psql -d honcho -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" &>/dev/null && log "wiped" || {
+        warn "schema wipe failed, trying dropdb..."
+        dropdb honcho 2>/dev/null && log "dropped" || warn "could not drop (may need: sudo -u postgres dropdb honcho)"
+    }
 fi
 
 # ── Remove vdirsyncer config ─────────────────────────────────────

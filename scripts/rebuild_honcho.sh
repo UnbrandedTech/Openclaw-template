@@ -73,15 +73,35 @@ fi
 # ── Step 1: Drop and recreate database ────────────────────────────
 step "Step 1: Resetting Honcho database"
 
-if command -v psql &>/dev/null && psql -lqt 2>/dev/null | cut -d \| -f 1 | grep -qw honcho; then
-    log "Dropping honcho database..."
-    dropdb honcho 2>/dev/null || { err "Could not drop database"; exit 1; }
-    log "Dropped"
+# Stop the OpenClaw gateway (holds connections to Honcho)
+if command -v openclaw &>/dev/null; then
+    log "Stopping OpenClaw gateway..."
+    openclaw gateway stop 2>/dev/null || true
+    sleep 2
 fi
 
-createdb honcho 2>/dev/null || true
-psql honcho -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
-log "Created fresh honcho database"
+if command -v psql &>/dev/null && psql -d postgres -lqt 2>/dev/null | cut -d \| -f 1 | grep -qw honcho; then
+    # Terminate any remaining connections
+    log "Terminating active connections..."
+    psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'honcho' AND pid <> pg_backend_pid();" 2>/dev/null || true
+    sleep 1
+
+    # Wipe all data by dropping and recreating the public schema
+    # (avoids needing CREATEDB privilege to drop/recreate the whole database)
+    log "Wiping honcho data..."
+    psql -d honcho -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public; CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || {
+        err "Could not wipe database. Trying full drop..."
+        dropdb honcho 2>/dev/null && createdb honcho 2>/dev/null || { err "Database reset failed"; exit 1; }
+        psql -d honcho -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
+    }
+    log "Database wiped"
+else
+    # Database doesn't exist, try to create it
+    log "Creating honcho database..."
+    createdb honcho 2>/dev/null || { err "Could not create database (may need: sudo -u postgres createdb -O $USER honcho)"; exit 1; }
+    psql -d honcho -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null || true
+    log "Created honcho database"
+fi
 
 # Clear sync state files so scripts re-process everything
 rm -f "$WORKSPACE/slack_messages/.honcho_sync_state.json"
