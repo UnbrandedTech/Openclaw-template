@@ -126,13 +126,14 @@ def discover_bots_from_api(token: str) -> dict:
     internal_domain = max(domain_counts, key=domain_counts.get) if domain_counts else ""
 
     # Tag each user as internal or external
+    # Key insight: Slack guest users (is_restricted/is_ultra_restricted) are external.
+    # Full workspace members are internal regardless of email domain — this handles
+    # contractors who have their own domains but are part of the team.
     for uid, p in user_profiles.items():
         if p.get("is_guest"):
             p["classification"] = "external"
-        elif p.get("email_domain") == internal_domain or not p.get("email_domain"):
-            p["classification"] = "internal"
         else:
-            p["classification"] = "external"
+            p["classification"] = "internal"
 
     print(f"  Found {len(bot_uids)} bot/app users, {len(user_profiles)} humans")
     if internal_domain:

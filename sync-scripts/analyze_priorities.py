@@ -273,28 +273,29 @@ def build_prompt(
     discovered = load_json(WORKSPACE / "discovered_people.json")
     internal_domain = discovered.get("internal_domain", "")
 
-    domain_note = ""
-    if internal_domain:
-        domain_note = f"""
+    domain_note = """
 CRITICAL CLASSIFICATION RULE:
-- Users with @{internal_domain} email addresses are INTERNAL team members. Never classify them as clients.
-- Users marked as "Guest" in Slack (is_guest=YES) are EXTERNAL contacts (clients, contractors, vendors).
-- Users with a different email domain who are NOT guests may be contractors or partners.
-- The "Classification" column already has a preliminary internal/external tag based on these signals. Trust it as a strong hint.
+- The "Classification" column is authoritative. It is based on Slack workspace membership:
+  - "internal" = full workspace member (employee OR contractor). NEVER classify these as clients.
+  - "external" = Slack guest user. These are client contacts, vendors, or external collaborators.
+- Internal team members may have different email domains (e.g., contractors use their own company email). That does NOT make them clients.
+- Only "external" (guest) users should appear as client_contact in tracked_people or as contacts under clients.
 """
+    if internal_domain:
+        domain_note += f"- The primary company domain is @{internal_domain}, but contractors may use other domains.\n"
 
     # -- Services business emphasis --
     services_note = ""
     if services_business:
         services_note = """
 IMPORTANT: This user runs a services/consulting business. Pay special attention to:
-- Identifying client companies from email domains (e.g., @acme.com contacts are likely from client "Acme")
-- Slack channel naming patterns that suggest client projects (e.g., "acme-project", "client-acme", "ext-acme")
-- Guest users are almost certainly client contacts
-- Internal team members (@{internal_domain}) should NEVER appear as client contacts
+- Only users classified as "external" (Slack guests) should be treated as client contacts
+- Identify client companies by grouping external/guest users by their email domain
+- Slack channel naming patterns that suggest client projects (e.g., "acme-project", "client-acme")
+- Internal team members (classification="internal") should NEVER appear as client contacts, even if they have a different email domain (they may be contractors)
 - Grouping external contacts by their company/client affiliation
 - Marking client channels and their associated contacts
-""".replace("{internal_domain}", internal_domain)
+"""
 
     prompt = f"""You are analyzing workspace data for a professional to determine their priority contacts,
 client relationships, and important communication channels.
