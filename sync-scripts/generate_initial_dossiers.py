@@ -408,22 +408,18 @@ def main():
 
             print(f"  [{i}/{total_people}] {person_name}... ", end="", flush=True)
 
-            # Resolve the Honcho peer_id — team.json uses sanitized full name
-            # but Honcho peers may use sanitized display name (which can differ).
-            # Try multiple variants: UID-resolved, first name, full name, raw peer_id.
+            # Try all known aliases for this person when querying Honcho
             peer_id = info["peer_id"]
+            aliases = info.get("aliases", [peer_id])
+            # Also add UID-resolved display name if not already in aliases
             slack_uid = info.get("slack_uid", "")
-
-            candidates = [peer_id]
             if slack_uid and slack_uid in uid_to_peer_id:
-                candidates.insert(0, uid_to_peer_id[slack_uid])
-            # Try first name only (e.g., "preston" for "Preston Rutherford")
-            first_name_id = sanitize_id(person_name.split()[0]) if person_name else ""
-            if first_name_id and first_name_id not in candidates:
-                candidates.append(first_name_id)
+                uid_peer = uid_to_peer_id[slack_uid]
+                if uid_peer not in aliases:
+                    aliases = [uid_peer] + list(aliases)
 
             context = ""
-            for candidate in candidates:
+            for candidate in aliases:
                 context = get_person_context(honcho, candidate, person_name)
                 if context.strip():
                     if candidate != peer_id:

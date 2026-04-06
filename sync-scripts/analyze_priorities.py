@@ -529,6 +529,57 @@ def backfill_slack_uids(people: dict) -> dict:
     return people
 
 
+def build_aliases(people: dict) -> dict:
+    """Build an aliases array for each tracked person.
+
+    Collects all known identifiers so the dossier generator can try
+    multiple peer IDs when looking up Honcho data:
+      - peer_id (sanitized full name)
+      - Slack display name (sanitized, may differ from full name)
+      - Slack username (from DM channel names)
+      - First name only
+    """
+    from shared import sanitize_id
+
+    # Load users cache for display name -> UID mapping
+    users_cache = load_json(MESSAGES_DIR / ".users_cache.json")
+    uid_to_display = {}
+    for uid, name in users_cache.items():
+        if not uid.startswith("_") and isinstance(name, str):
+            uid_to_display[uid] = name
+
+    for name, info in people.items():
+        existing_aliases = set(info.get("aliases", []))
+        peer_id = info.get("peer_id", "")
+        slack_uid = info.get("slack_uid", "")
+
+        # Always include the canonical peer_id
+        if peer_id:
+            existing_aliases.add(peer_id)
+
+        # Add sanitized display name from Slack (e.g., "tom" for "Tom")
+        if slack_uid and slack_uid in uid_to_display:
+            display = uid_to_display[slack_uid]
+            display_id = sanitize_id(display)
+            if display_id:
+                existing_aliases.add(display_id)
+
+        # Add first-name-only variant
+        first = name.split()[0] if name else ""
+        first_id = sanitize_id(first) if first else ""
+        if first_id and len(first_id) >= 3:
+            existing_aliases.add(first_id)
+
+        # Add the full name sanitized (in case peer_id was set differently)
+        name_id = sanitize_id(name)
+        if name_id:
+            existing_aliases.add(name_id)
+
+        info["aliases"] = sorted(existing_aliases)
+
+    return people
+
+
 def merge_into_team(existing: dict, analysis: dict) -> dict:
     """Merge Sonnet's analysis into existing team.json, preserving manual fields."""
     merged = dict(existing)
@@ -714,6 +765,9 @@ def main():
 
     # Backfill Slack UIDs that the LLM left empty
     merged["tracked_people"] = backfill_slack_uids(merged.get("tracked_people", {}))
+
+    # Build aliases for each person (all known IDs for Honcho peer resolution)
+    merged["tracked_people"] = build_aliases(merged.get("tracked_people", {}))
 
     save_json(TEAM_FILE, merged)
     print(f"\n  Wrote {TEAM_FILE}")
