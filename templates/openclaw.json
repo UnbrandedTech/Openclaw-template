@@ -10,6 +10,17 @@
       }
     }
   },
+  "memory": {
+    "backend": "qmd",
+    "qmd": {
+      "paths": [
+        { "name": "vault-people", "path": "~/Documents/Obsidian Vault/People", "pattern": "**/*.md" },
+        { "name": "vault-clients", "path": "~/Documents/Obsidian Vault/Clients", "pattern": "**/*.md" },
+        { "name": "transcripts", "path": "~/.openclaw/workspace/transcriptions", "pattern": "**/*.txt" }
+      ],
+      "sessions": { "enabled": true }
+    }
+  },
   "agents": {
     "defaults": {
       "model": {

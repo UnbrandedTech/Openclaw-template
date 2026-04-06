@@ -878,6 +878,27 @@ if [ ! -f "$OPENCLAW_DIR/openclaw.json" ]; then
         bedrock)   GATEWAY_AUTH_PROFILE="\"bedrock:default\": {\"provider\": \"bedrock\", \"mode\": \"oauth\"}" ;;
     esac
 
+    VAULT_PATH_ESCAPED="${OBSIDIAN_VAULT:-$HOME/Documents/Obsidian Vault}"
+
+    # Enable QMD if installed
+    QMD_CONFIG=""
+    if command -v qmd &>/dev/null; then
+        QMD_CONFIG="$(cat << QMDBLOCK
+  "memory": {
+    "backend": "qmd",
+    "qmd": {
+      "paths": [
+        { "name": "vault-people", "path": "$VAULT_PATH_ESCAPED/People", "pattern": "**/*.md" },
+        { "name": "vault-clients", "path": "$VAULT_PATH_ESCAPED/Clients", "pattern": "**/*.md" },
+        { "name": "transcripts", "path": "$WORKSPACE/transcriptions", "pattern": "**/*.txt" }
+      ],
+      "sessions": { "enabled": true }
+    }
+  },
+QMDBLOCK
+)"
+    fi
+
     cat > "$OPENCLAW_DIR/openclaw.json" << GWEOF
 {
   "gateway": {
@@ -888,6 +909,7 @@ if [ ! -f "$OPENCLAW_DIR/openclaw.json" ]; then
       $GATEWAY_AUTH_PROFILE
     }
   },
+  $QMD_CONFIG
   "agents": {
     "defaults": {
       "model": {

@@ -159,6 +159,25 @@ else
     log "gum already installed"
 fi
 
+# ── QMD (memory search engine) ─────────────────────────────────────
+if ! command -v qmd &>/dev/null; then
+    log "Installing QMD (memory search engine)..."
+    if command -v bun &>/dev/null; then
+        bun install -g @tobilu/qmd
+    elif command -v npm &>/dev/null; then
+        npm install -g @tobilu/qmd
+    else
+        warn "Neither bun nor npm found — QMD not installed. Install manually: npm install -g @tobilu/qmd"
+    fi
+    if command -v qmd &>/dev/null; then
+        log "QMD installed"
+    else
+        warn "QMD not on PATH. If installed via bun, try: sudo ln -s ~/.bun/bin/qmd /usr/local/bin/qmd"
+    fi
+else
+    log "QMD already installed"
+fi
+
 # ── Python venv ─────────────────────────────────────────────────────
 VENV="$HOME/.openclaw/venv"
 if [ ! -d "$VENV" ]; then
