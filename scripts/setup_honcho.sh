@@ -72,3 +72,43 @@ fi
 # Install Python client
 "$HOME/.openclaw/venv/bin/pip" install honcho-ai
 log "Honcho Python client installed"
+
+# Install OpenClaw Honcho plugin
+if command -v openclaw &>/dev/null; then
+    if ! openclaw plugins list 2>/dev/null | grep -q "openclaw-honcho"; then
+        log "Installing OpenClaw Honcho plugin..."
+        openclaw plugins install @honcho-ai/openclaw-honcho 2>/dev/null || warn "Could not install Honcho plugin (install manually: openclaw plugins install @honcho-ai/openclaw-honcho)"
+    else
+        log "OpenClaw Honcho plugin already installed"
+    fi
+
+    # Configure the plugin in openclaw.json
+    if [ -f "$OPENCLAW_DIR/openclaw.json" ]; then
+        HONCHO_URL="http://localhost:18790"
+        if [ "$HONCHO_OPTION" = "1" ]; then
+            HONCHO_URL="https://api.honcho.dev"
+        fi
+
+        python3 -c "
+import json, sys
+with open('$OPENCLAW_DIR/openclaw.json') as f:
+    config = json.load(f)
+plugins = config.setdefault('plugins', {})
+entries = plugins.setdefault('entries', {})
+if 'openclaw-honcho' not in entries:
+    entries['openclaw-honcho'] = {
+        'config': {
+            'workspaceId': 'openclaw',
+            'baseUrl': '$HONCHO_URL',
+        }
+    }
+    with open('$OPENCLAW_DIR/openclaw.json', 'w') as f:
+        json.dump(config, f, indent=2)
+    print('  Configured Honcho plugin in openclaw.json')
+else:
+    print('  Honcho plugin already configured')
+" 2>/dev/null
+    fi
+else
+    warn "OpenClaw not installed yet — Honcho plugin will be configured after OpenClaw install"
+fi
