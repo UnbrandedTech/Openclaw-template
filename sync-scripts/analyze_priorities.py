@@ -438,9 +438,9 @@ def deduplicate_people(people: dict) -> dict:
 
     Detects duplicates via:
     1. Username-style entry shares a last name with a proper-name entry
-       (e.g., "Tgreene Montgomery" vs "Tom Montgomery")
+       (e.g., "Jsmith123 Doe" vs "John Doe")
     2. Single-word entry (likely a Slack username) matches a first name of a
-       multi-word entry (e.g., "prestonr2" when "Preston Rutherford" exists)
+       multi-word entry (e.g., "jdoe99" when "Jane Doe" exists)
     3. Entries that share the same Slack UID
     """
     to_remove = set()
@@ -468,7 +468,7 @@ def deduplicate_people(people: dict) -> dict:
     for username in single_word:
         uname_lower = username.lower()
         for full_name, first_lower in multi_word.items():
-            # "prestonr2" starts with "preston" (first name of "Preston Rutherford")
+            # "jdoe99" starts with "jane" (first name of "Jane Doe")
             if uname_lower.startswith(first_lower) and len(first_lower) >= 3:
                 to_remove.add(username)
                 break
@@ -609,7 +609,7 @@ def build_aliases(people: dict) -> dict:
                     )
                 else:
                     # Pass 2: match by email local part against known aliases
-                    # (catches prestonr2@gmail.com when "preston" is an alias)
+                    # (catches jdoe99@gmail.com when "jane" is an alias)
                     matched = (
                         local_id in existing_aliases
                         or any(local.startswith(a) and len(a) >= 3 for a in existing_aliases)

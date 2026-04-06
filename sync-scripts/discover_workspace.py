@@ -331,8 +331,8 @@ def discover_people(bot_uids: set, user_profiles: dict = None) -> dict:
 def detect_peer_merges(scored: list[dict], user_profiles: dict) -> dict:
     """Detect likely duplicate people by name similarity.
 
-    DM channels use Slack usernames (e.g., "tgreenemontgomery") which differ
-    from display names ("Tom Montgomery"). This finds cases where a scored
+    DM channels use Slack usernames (e.g., "jsmith123") which differ
+    from display names ("John Smith"). This finds cases where a scored
     person's name is likely a username variant of another person.
 
     Returns: {duplicate_peer_id: canonical_peer_id}
