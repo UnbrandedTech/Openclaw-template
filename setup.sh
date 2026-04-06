@@ -964,6 +964,33 @@ else
     log "openclaw.json exists"
 fi
 
+# Always ensure gateway.mode and QMD config are set
+# (plugin installs can rewrite openclaw.json and strip these)
+VAULT_PATH_ESCAPED="${OBSIDIAN_VAULT:-$HOME/Documents/Obsidian Vault}"
+python3 -c "
+import json
+config_path = '$OPENCLAW_DIR/openclaw.json'
+with open(config_path) as f:
+    config = json.load(f)
+config.setdefault('gateway', {})['mode'] = 'local'
+if 'qmd' not in config.get('memory', {}):
+    qmd_available = True  # assume yes, harmless if not
+    if qmd_available:
+        config['memory'] = {
+            'backend': 'qmd',
+            'qmd': {
+                'paths': [
+                    {'name': 'vault-people', 'path': '$VAULT_PATH_ESCAPED/People', 'pattern': '**/*.md'},
+                    {'name': 'vault-clients', 'path': '$VAULT_PATH_ESCAPED/Clients', 'pattern': '**/*.md'},
+                    {'name': 'transcripts', 'path': '$WORKSPACE/transcriptions', 'pattern': '**/*.txt'},
+                ],
+                'sessions': {'enabled': True},
+            },
+        }
+with open(config_path, 'w') as f:
+    json.dump(config, f, indent=2)
+" 2>/dev/null
+
 # -- Sync script config (openclaw-sync.json) --
 if [ ! -f "$OPENCLAW_DIR/openclaw-sync.json" ]; then
     SYNC_AUTH_PROFILE=""

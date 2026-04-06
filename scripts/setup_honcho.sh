@@ -116,23 +116,25 @@ if command -v openclaw &>/dev/null; then
         fi
 
         python3 -c "
-import json, sys
-with open('$OPENCLAW_DIR/openclaw.json') as f:
+import json, os
+config_path = '$OPENCLAW_DIR/openclaw.json'
+with open(config_path) as f:
     config = json.load(f)
+
+# Configure Honcho plugin
 plugins = config.setdefault('plugins', {})
 entries = plugins.setdefault('entries', {})
-if 'openclaw-honcho' not in entries:
-    entries['openclaw-honcho'] = {
-        'config': {
-            'workspaceId': 'openclaw',
-            'baseUrl': '$HONCHO_URL',
-        }
-    }
-    with open('$OPENCLAW_DIR/openclaw.json', 'w') as f:
-        json.dump(config, f, indent=2)
-    print('  Configured Honcho plugin in openclaw.json')
-else:
-    print('  Honcho plugin already configured')
+honcho = entries.setdefault('openclaw-honcho', {})
+honcho_cfg = honcho.setdefault('config', {})
+honcho_cfg['workspaceId'] = 'openclaw'
+honcho_cfg['baseUrl'] = '$HONCHO_URL'
+
+# Restore fields that plugin install may have wiped
+config.setdefault('gateway', {})['mode'] = 'local'
+
+with open(config_path, 'w') as f:
+    json.dump(config, f, indent=2)
+print('  Configured Honcho plugin + restored gateway.mode')
 " 2>/dev/null
     fi
 else
