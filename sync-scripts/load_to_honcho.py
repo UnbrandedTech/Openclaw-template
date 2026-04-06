@@ -65,8 +65,37 @@ def collect_transcript_files(sync_state: dict) -> list[Path]:
     return files
 
 
+MAX_MSG_CHARS = 24000  # Honcho limit is 25000; leave headroom
+
+
+def _chunk_text(text: str, max_chars: int = MAX_MSG_CHARS) -> list[str]:
+    """Split text into chunks that fit within Honcho's message size limit.
+
+    Tries to break on paragraph boundaries, falls back to hard split.
+    """
+    if len(text) <= max_chars:
+        return [text]
+
+    chunks = []
+    while text:
+        if len(text) <= max_chars:
+            chunks.append(text)
+            break
+        # Try to break on a double newline (paragraph boundary)
+        split_at = text.rfind("\n\n", 0, max_chars)
+        if split_at < max_chars // 2:
+            # No good paragraph break; try single newline
+            split_at = text.rfind("\n", 0, max_chars)
+        if split_at < max_chars // 2:
+            # Hard split
+            split_at = max_chars
+        chunks.append(text[:split_at])
+        text = text[split_at:].lstrip("\n")
+    return chunks
+
+
 def load_transcripts(honcho, new_files: list[Path], sync_state: dict, *, verbose: bool):
-    """Push transcript files into Honcho."""
+    """Push transcript files into Honcho, chunking long transcripts."""
     ingest_peer = honcho.peer("transcript-ingest", metadata={
         "source": "transcript",
         "display_name": "Transcript Ingest",
@@ -94,17 +123,25 @@ def load_transcripts(honcho, new_files: list[Path], sync_state: dict, *, verbose
                 print(f"  Skipping empty transcript: {path.name}")
             continue
 
-        msg = ingest_peer.message(
-            text,
-            metadata={"filename": path.name},
-            configuration={"reasoning": {"enabled": False}},
-        )
+        chunks = _chunk_text(text)
+        msgs = []
+        for i, chunk in enumerate(chunks):
+            meta = {"filename": path.name}
+            if len(chunks) > 1:
+                meta["chunk"] = i + 1
+                meta["total_chunks"] = len(chunks)
+            msgs.append(ingest_peer.message(
+                chunk,
+                metadata=meta,
+                configuration={"reasoning": {"enabled": False}},
+            ))
 
         try:
-            session.add_messages([msg])
+            for i in range(0, len(msgs), BATCH_SIZE):
+                session.add_messages(msgs[i:i + BATCH_SIZE])
             sent += 1
-            if verbose:
-                print(f"  transcript: {path.name} -> {session_id}")
+            if verbose or len(chunks) > 1:
+                print(f"  transcript: {path.name} ({len(chunks)} chunk{'s' if len(chunks) > 1 else ''})")
         except Exception as e:
             errors += 1
             print(f"  ERROR sending transcript {path.name}: {e}")
