@@ -69,9 +69,19 @@ if [ "$EMAIL_PROVIDER" = "google" ]; then
                 gog auth add "$REPLY"
                 log "gogcli authenticated as $REPLY"
                 echo "GOG_ACCOUNT=$REPLY" >> "$WORKSPACE/.google_env"
+                store_secret "GOG_ACCOUNT" "$REPLY"
             fi
         else
             log "gogcli already authenticated"
+            # Ensure GOG_ACCOUNT is set even if auth already exists
+            if ! grep -q "^GOG_ACCOUNT=" "$WORKSPACE/.env" 2>/dev/null; then
+                GOG_ACCT=$(gog auth list 2>/dev/null | head -1 | awk '{print $1}')
+                if [ -n "$GOG_ACCT" ]; then
+                    echo "GOG_ACCOUNT=$GOG_ACCT" >> "$WORKSPACE/.google_env"
+                    store_secret "GOG_ACCOUNT" "$GOG_ACCT"
+                    log "Set GOG_ACCOUNT=$GOG_ACCT"
+                fi
+            fi
         fi
     else
         if ! command -v gog &>/dev/null; then
@@ -133,7 +143,7 @@ esac
 # ── 2. vdirsyncer + khal for calendar ──────────────────────────────
 
 if [ "$CALENDAR_PROVIDER" != "none" ]; then
-    "$HOME/.openclaw/venv/bin/pip" install vdirsyncer khal icalendar 2>/dev/null
+    "$HOME/.openclaw/venv/bin/pip" install vdirsyncer khal icalendar aiohttp-oauthlib 2>/dev/null
 
     if [ ! -f ~/.config/vdirsyncer/config ]; then
         mkdir -p ~/.config/vdirsyncer
@@ -217,9 +227,9 @@ VDIREOF
             log "vdirsyncer config created for CalDAV ($CALDAV_URL)"
         fi
 
-        warn "Run these to finish calendar setup:"
-        warn "  vdirsyncer discover calendars"
-        warn "  vdirsyncer sync"
+        log "Running initial calendar discovery (this may open a browser for OAuth)..."
+        "$HOME/.openclaw/venv/bin/vdirsyncer" discover calendars 2>&1 || warn "vdirsyncer discover had errors — run 'vdirsyncer discover calendars' manually"
+        "$HOME/.openclaw/venv/bin/vdirsyncer" sync 2>&1 || warn "vdirsyncer sync had errors"
     else
         log "vdirsyncer already configured"
     fi

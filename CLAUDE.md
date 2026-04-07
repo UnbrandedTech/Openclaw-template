@@ -9,7 +9,9 @@ A self-configuring setup kit for OpenClaw — an AI agent platform. The setup sc
 ## Running Setup
 
 ```bash
-./setup.sh                    # Full setup (12 phases, interactive)
+./setup.sh                    # Full setup (12 phases, interactive wizard)
+./setup.sh --no-wizard        # Plain text mode (no gum TUI)
+./setup.sh --from 7           # Restart from phase N (skips earlier phases)
 ./setup.sh --skip-deps        # Skip Homebrew/Node/Python install
 ./setup.sh --skip-google      # Skip Google Workspace setup
 ./setup.sh --skip-slack       # Skip Slack setup
@@ -45,7 +47,8 @@ Step 5: Generate Dossiers (fast model)
 
 ### Directory Layout
 
-- **`setup.sh`** — Orchestrator. 12 phases, sources scripts from `scripts/`.
+- **`setup.sh`** — Orchestrator. 12 phases, sources scripts from `scripts/`. Supports `--from N` to restart from a specific phase.
+- **`uninstall.sh`** — Removes `~/.openclaw`, cron jobs, keychain entries, vdirsyncer config. `--include-vault` also removes Obsidian People/Clients dirs.
 - **`scripts/`** — One-time setup scripts. Each is idempotent.
 - **`sync-scripts/`** — Python scripts for cron + setup. Copied to `~/.openclaw/workspace/scripts/`.
 - **`workspace/`** — Agent identity markdown files. Copied to `~/.openclaw/workspace/`.
@@ -110,6 +113,7 @@ Model roles (`fast`, `reasoning`) are mapped to specific provider/model in `open
 - **gh** — GitHub CLI (optional)
 - **icalendar** — Python library for .ics calendar parsing
 - **secret-tool** — Linux keychain access via libsecret (optional, for encrypted credential storage)
+- **gum** — Charm TUI toolkit for the setup wizard (optional, auto-installed by install_deps.sh)
 
 ## Conventions
 
@@ -122,6 +126,7 @@ Model roles (`fast`, `reasoning`) are mapped to specific provider/model in `open
 - `sedi()` wrapper in setup.sh handles cross-platform `sed -i` (macOS needs `''` arg, Linux doesn't).
 - `store_secret()` in setup.sh stores credentials in system keychain or `.env` file based on `USE_KEYCHAIN`.
 - Secrets accessed via `get_secret(name)` from shared.py: checks keychain first, then env vars, then `.env` file. Controlled by `"keychain": true` in `user.json`.
+- Wizard mode uses `gum` for styled TUI (auto-detected, `--no-wizard` to disable). Helper functions: `wizard_choose()`, `wizard_confirm()`, `wizard_input()`, `wizard_spin()`, `run_phase()` (with retry/skip error recovery).
 
 ## Environment Variables
 

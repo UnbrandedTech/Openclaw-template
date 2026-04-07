@@ -33,6 +33,7 @@ from shared import (
     load_json,
     save_json,
     call_llm,
+    check_llm_ready,
     USER_NAME,
     USER_TITLE,
     USER_COMPANY,
@@ -215,15 +216,19 @@ def build_prompt(
 ) -> str:
     """Build the analysis prompt for Claude Sonnet."""
 
-    # -- Slack people summary --
+    # -- Slack people summary (enriched with profile data) --
     slack_section = "## Top Slack Contacts (by interaction score)\n\n"
     if slack_people:
-        slack_section += "| Name | DM Messages | Channel Count | Total Messages | Score |\n"
-        slack_section += "|------|------------|---------------|----------------|-------|\n"
+        slack_section += "| Name | Email | Title | Guest? | Classification | DMs | Channels | Score |\n"
+        slack_section += "|------|-------|-------|--------|---------------|-----|----------|-------|\n"
         for p in slack_people:
+            guest_tag = "YES (guest)" if p.get("is_guest") else "no"
+            classification = p.get("classification", "unknown")
+            email = p.get("email", "")
+            title = p.get("title", "")
             slack_section += (
-                f"| {p['name']} | {p['dm_messages']} | {p['channel_count']} "
-                f"| {p['total_messages']} | {p['score']} |\n"
+                f"| {p['name']} | {email} | {title} | {guest_tag} | {classification} "
+                f"| {p['dm_messages']} | {p.get('channel_count', p.get('channels', 0))} | {p['score']} |\n"
             )
     else:
         slack_section += "(No Slack data available)\n"
@@ -265,15 +270,31 @@ def build_prompt(
     else:
         channel_section += "(No channel data available)\n"
 
+    # -- Internal domain hint --
+    discovered = load_json(WORKSPACE / "discovered_people.json")
+    internal_domain = discovered.get("internal_domain", "")
+
+    domain_note = """
+CRITICAL CLASSIFICATION RULE:
+- The "Classification" column is authoritative. It is based on Slack workspace membership:
+  - "internal" = full workspace member (employee OR contractor). NEVER classify these as clients.
+  - "external" = Slack guest user. These are client contacts, vendors, or external collaborators.
+- Internal team members may have different email domains (e.g., contractors use their own company email). That does NOT make them clients.
+- Only "external" (guest) users should appear as client_contact in tracked_people or as contacts under clients.
+"""
+    if internal_domain:
+        domain_note += f"- The primary company domain is @{internal_domain}, but contractors may use other domains.\n"
+
     # -- Services business emphasis --
     services_note = ""
     if services_business:
         services_note = """
 IMPORTANT: This user runs a services/consulting business. Pay special attention to:
-- Identifying client companies from email domains (e.g., @acme.com contacts are likely from client "Acme")
-- Slack channel naming patterns that suggest client projects (e.g., "acme-project", "client-acme", "ext-acme")
-- Distinguishing between internal team members (same email domain as the user) and external client contacts
-- Grouping contacts by their company/client affiliation
+- Only users classified as "external" (Slack guests) should be treated as client contacts
+- Identify client companies by grouping external/guest users by their email domain
+- Slack channel naming patterns that suggest client projects (e.g., "acme-project", "client-acme")
+- Internal team members (classification="internal") should NEVER appear as client contacts, even if they have a different email domain (they may be contractors)
+- Grouping external contacts by their company/client affiliation
 - Marking client channels and their associated contacts
 """
 
@@ -284,6 +305,8 @@ client relationships, and important communication channels.
 - Name: {USER_NAME or '(unknown)'}
 - Title: {USER_TITLE or '(unknown)'}
 - Company: {USER_COMPANY or '(unknown)'}
+- Internal email domain: @{internal_domain or '(unknown)'}
+{domain_note}
 {services_note}
 ## Workspace Data
 
@@ -329,6 +352,7 @@ Produce your output as JSON wrapped in ```json blocks. The JSON should have this
       "priority": "high|medium|low",
       "slack_uid": "U...",
       "email": "person@example.com",
+      "emails": ["person@example.com", "person@personal.com"],
       "company": "Company Name",
       "reason": "Brief explanation of why this priority level"
     }}
@@ -362,7 +386,7 @@ Rules:
 - `priority_channels`: The top 5-10 channels that matter most for the user's work.
 - `deep_reconcile_peers`: The top 5 most important people (peer_id -> display name) who warrant deep context tracking.
 - `client_channel_prefix`: If you detect a common prefix pattern for client channels, include it. Otherwise empty string.
-- For each person in tracked_people, include their email if available from calendar data.
+- For each person, include ALL known emails in the "emails" array. People often use both work and personal emails (e.g., ["p@company.com", "person@gmail.com"]). Set "email" to the primary/work email.
 - Match people across data sources by name (Slack name may differ slightly from calendar name — use best judgment).
 
 Return ONLY the JSON block, no other text before or after it.
@@ -407,6 +431,199 @@ def parse_sonnet_response(response_text: str) -> dict:
 
 
 # ── Merge into team.json ──────────────────────────────────────────────────
+
+
+def deduplicate_people(people: dict) -> dict:
+    """Remove likely duplicate entries from tracked_people.
+
+    Detects duplicates via:
+    1. Username-style entry shares a last name with a proper-name entry
+       (e.g., "Jsmith123 Doe" vs "John Doe")
+    2. Single-word entry (likely a Slack username) matches a first name of a
+       multi-word entry (e.g., "jdoe99" when "Jane Doe" exists)
+    3. Entries that share the same Slack UID
+    """
+    to_remove = set()
+
+    # Strategy 1: last-name matching (username vs real name)
+    by_last = {}
+    for name in people:
+        parts = name.split()
+        if len(parts) >= 2:
+            last = parts[-1].lower()
+            by_last.setdefault(last, []).append(name)
+
+    for last, names in by_last.items():
+        if len(names) <= 1:
+            continue
+        real_names = [n for n in names if len(n.split()) >= 2 and n.split()[0][0].isupper()]
+        username_names = [n for n in names if n not in real_names]
+        if real_names and username_names:
+            for dup in username_names:
+                to_remove.add(dup)
+
+    # Strategy 2: single-word usernames that match a first name
+    multi_word = {n: n.split()[0].lower() for n in people if len(n.split()) >= 2}
+    single_word = [n for n in people if " " not in n and not n[0].isupper()]
+    for username in single_word:
+        uname_lower = username.lower()
+        for full_name, first_lower in multi_word.items():
+            # "jdoe99" starts with "jane" (first name of "Jane Doe")
+            if uname_lower.startswith(first_lower) and len(first_lower) >= 3:
+                to_remove.add(username)
+                break
+
+    # Strategy 3: same Slack UID
+    by_uid = {}
+    for name, info in people.items():
+        uid = info.get("slack_uid", "")
+        if uid:
+            by_uid.setdefault(uid, []).append(name)
+    for uid, names in by_uid.items():
+        if len(names) > 1:
+            # Keep the multi-word name (more informative)
+            names.sort(key=lambda n: (-len(n.split()), n))
+            for dup in names[1:]:
+                to_remove.add(dup)
+
+    if to_remove:
+        cleaned = {k: v for k, v in people.items() if k not in to_remove}
+        for name in sorted(to_remove):
+            print(f"  Dedup: removed '{name}'")
+        return cleaned
+    return people
+
+
+def backfill_slack_uids(people: dict) -> dict:
+    """Match tracked people to their Slack UIDs from discovered data.
+
+    The LLM often leaves slack_uid empty. This matches by name against
+    the scored people list (which has UIDs from the Slack API).
+    """
+    discovered = load_json(WORKSPACE / "discovered_people.json")
+    scored = discovered.get("scored", [])
+
+    # Build lookup: lowercase name -> uid
+    name_to_uid = {}
+    for p in scored:
+        name_to_uid[p["name"].lower()] = p["uid"]
+
+    filled = 0
+    for name, info in people.items():
+        if info.get("slack_uid"):
+            continue
+        # Try exact match
+        uid = name_to_uid.get(name.lower())
+        if not uid:
+            # Try first name match
+            first = name.split()[0].lower() if name else ""
+            for scored_name, scored_uid in name_to_uid.items():
+                if scored_name == first or scored_name.startswith(first + " "):
+                    uid = scored_uid
+                    break
+        if uid:
+            info["slack_uid"] = uid
+            filled += 1
+
+    if filled:
+        print(f"  Backfilled {filled} Slack UIDs")
+    return people
+
+
+def build_aliases(people: dict) -> dict:
+    """Build an aliases array for each tracked person.
+
+    Collects all known identifiers so the dossier generator can try
+    multiple peer IDs when looking up Honcho data:
+      - peer_id (sanitized full name)
+      - Slack display name (sanitized, may differ from full name)
+      - First name only
+      - Email-derived IDs (local part of each email)
+    Also consolidates all known emails into an "emails" array.
+    """
+    from shared import sanitize_id
+
+    # Load users cache for display name -> UID mapping
+    users_cache = load_json(MESSAGES_DIR / ".users_cache.json")
+    uid_to_display = {}
+    for uid, name in users_cache.items():
+        if not uid.startswith("_") and isinstance(name, str):
+            uid_to_display[uid] = name
+
+    # Load calendar attendees to find additional emails for the same person
+    attendees = load_json(WORKSPACE / "calendar_attendees.json")
+
+    for name, info in people.items():
+        existing_aliases = set(info.get("aliases", []))
+        emails = set()
+        peer_id = info.get("peer_id", "")
+        slack_uid = info.get("slack_uid", "")
+
+        # Collect known email
+        if info.get("email"):
+            emails.add(info["email"].lower())
+
+        # Always include the canonical peer_id
+        if peer_id:
+            existing_aliases.add(peer_id)
+
+        # Add sanitized display name from Slack (e.g., "tom" for "Tom")
+        if slack_uid and slack_uid in uid_to_display:
+            display = uid_to_display[slack_uid]
+            display_id = sanitize_id(display)
+            if display_id:
+                existing_aliases.add(display_id)
+
+        # Add first-name-only variant
+        first = name.split()[0] if name else ""
+        first_id = sanitize_id(first) if first else ""
+        if first_id and len(first_id) >= 3:
+            existing_aliases.add(first_id)
+
+        # Add the full name sanitized
+        name_id = sanitize_id(name)
+        if name_id:
+            existing_aliases.add(name_id)
+
+        # Match calendar attendees by name/alias to find additional emails
+        name_lower = name.lower()
+        first_lower = first.lower() if first else ""
+        # Run two passes: first by name, then by email local part matching aliases
+        for _pass in range(2):
+            for email, att_info in attendees.items():
+                if email.lower() in emails:
+                    continue
+                if not isinstance(att_info, dict):
+                    continue
+                att_name = att_info.get("name", "").lower()
+                local = email.split("@")[0].lower() if "@" in email else ""
+                local_id = sanitize_id(local) if local else ""
+
+                matched = False
+                if _pass == 0:
+                    # Pass 1: match by name
+                    matched = (
+                        att_name == name_lower
+                        or (first_lower and att_name == first_lower)
+                        or (first_lower and att_name.startswith(first_lower + " "))
+                    )
+                else:
+                    # Pass 2: match by email local part against known aliases
+                    # (catches jdoe99@gmail.com when "jane" is an alias)
+                    matched = (
+                        local_id in existing_aliases
+                        or any(local.startswith(a) and len(a) >= 3 for a in existing_aliases)
+                    )
+
+                if matched:
+                    emails.add(email.lower())
+                    if local_id and len(local_id) >= 3:
+                        existing_aliases.add(local_id)
+
+        info["aliases"] = sorted(existing_aliases)
+        info["emails"] = sorted(emails) if emails else info.get("emails", [])
+
+    return people
 
 
 def merge_into_team(existing: dict, analysis: dict) -> dict:
@@ -483,6 +700,9 @@ def main():
         help="Emphasize client company detection (for consulting/services businesses)",
     )
     args = parser.parse_args()
+
+    if not args.dry_run:
+        check_llm_ready()
 
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M')}] Analyzing workspace priorities...")
     print(f"  User: {USER_NAME or '(not set)'} | {USER_TITLE or '(no title)'} @ {USER_COMPANY or '(no company)'}")
@@ -585,6 +805,15 @@ def main():
 
     existing = load_json(TEAM_FILE)
     merged = merge_into_team(existing, analysis)
+
+    # Deduplicate people (removes username-style duplicates like "Tgreene Montgomery")
+    merged["tracked_people"] = deduplicate_people(merged.get("tracked_people", {}))
+
+    # Backfill Slack UIDs that the LLM left empty
+    merged["tracked_people"] = backfill_slack_uids(merged.get("tracked_people", {}))
+
+    # Build aliases for each person (all known IDs for Honcho peer resolution)
+    merged["tracked_people"] = build_aliases(merged.get("tracked_people", {}))
 
     save_json(TEAM_FILE, merged)
     print(f"\n  Wrote {TEAM_FILE}")

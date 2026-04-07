@@ -1,0 +1,15 @@
+{
+  "models": {
+    "fast": "vertex/gemini-2.5-flash",
+    "reasoning": "vertex/claude-sonnet-4-6"
+  },
+  "auth": {
+    "profiles": {
+      "vertex:default": {
+        "provider": "vertex",
+        "project_id": "YOUR_PROJECT_ID",
+        "region": "us-east5"
+      }
+    }
+  }
+}

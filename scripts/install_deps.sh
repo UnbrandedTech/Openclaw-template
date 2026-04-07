@@ -129,6 +129,62 @@ else
     log "Google Cloud SDK already installed"
 fi
 
+# ── gum (TUI wizard) ───────────────────────────────────────────────
+if ! command -v gum &>/dev/null; then
+    log "Installing gum (interactive TUI)..."
+    if [ "$PLATFORM" = "macos" ]; then
+        brew install gum
+    elif [ "$DISTRO" = "debian" ]; then
+        sudo mkdir -p /etc/apt/keyrings
+        curl -fsSL https://repo.charm.sh/apt/gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null
+        echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | sudo tee /etc/apt/sources.list.d/charm.list > /dev/null
+        sudo apt-get update -qq && sudo apt-get install -y gum
+    elif [ "$DISTRO" = "fedora" ]; then
+        echo '[charm]
+name=Charm
+baseurl=https://repo.charm.sh/yum/
+enabled=1
+gpgcheck=1
+gpgkey=https://repo.charm.sh/yum/gpg.key' | sudo tee /etc/yum.repos.d/charm.repo > /dev/null
+        sudo dnf install -y gum
+    elif [ "$DISTRO" = "arch" ]; then
+        sudo pacman -S --noconfirm gum
+    fi
+    if command -v gum &>/dev/null; then
+        log "gum installed"
+    else
+        warn "gum not installed — wizard will use plain text mode"
+    fi
+else
+    log "gum already installed"
+fi
+
+# ── QMD (memory search engine) ─────────────────────────────────────
+if ! command -v qmd &>/dev/null; then
+    log "Installing QMD (memory search engine)..."
+    if command -v bun &>/dev/null; then
+        bun install -g @tobilu/qmd
+    elif command -v npm &>/dev/null; then
+        npm install -g @tobilu/qmd
+    else
+        warn "Neither bun nor npm found — QMD not installed. Install manually: npm install -g @tobilu/qmd"
+    fi
+    if command -v qmd &>/dev/null; then
+        log "QMD installed"
+        # Symlink to /usr/local/bin so systemd services (openclaw gateway) can find it
+        QMD_PATH=$(command -v qmd)
+        if [ ! -f /usr/local/bin/qmd ]; then
+            sudo ln -sf "$QMD_PATH" /usr/local/bin/qmd 2>/dev/null && \
+                log "Symlinked qmd to /usr/local/bin/qmd" || \
+                warn "Could not symlink qmd to /usr/local/bin/qmd — run: sudo ln -s $QMD_PATH /usr/local/bin/qmd"
+        fi
+    else
+        warn "QMD not on PATH. Install manually: npm install -g @tobilu/qmd"
+    fi
+else
+    log "QMD already installed"
+fi
+
 # ── Python venv ─────────────────────────────────────────────────────
 VENV="$HOME/.openclaw/venv"
 if [ ! -d "$VENV" ]; then

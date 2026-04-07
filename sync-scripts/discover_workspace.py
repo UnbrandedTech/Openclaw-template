@@ -64,15 +64,16 @@ def get_token():
 # ── Bot discovery ───────────────────────────────────────────────────────────
 
 def discover_bots_from_api(token: str) -> dict:
-    """Fetch all Slack users and identify bots."""
+    """Fetch all Slack users and identify bots. Also enriches user profiles."""
     if not HAS_SLACK:
         print("  slack-sdk not installed, skipping API bot discovery")
-        return {"bot_uids": [], "bot_patterns": [], "bot_details": {}}
+        return {"bot_uids": [], "bot_patterns": [], "bot_details": {}, "user_profiles": {}}
 
     client = WebClient(token=token)
     bot_uids = []
     bot_names = []
     bot_details = {}
+    user_profiles = {}  # uid -> enriched profile
     cursor = None
 
     print("  Fetching Slack users...")
@@ -84,14 +85,30 @@ def discover_bots_from_api(token: str) -> dict:
             resp = client.users_list(**kwargs)
             for user in resp.get("members", []):
                 uid = user.get("id", "")
+                profile = user.get("profile", {})
                 is_bot = user.get("is_bot", False)
                 is_app = user.get("is_app_user", False)
-                name = user.get("profile", {}).get("display_name") or user.get("real_name") or uid
+                is_guest = user.get("is_restricted", False) or user.get("is_ultra_restricted", False)
+                name = profile.get("display_name") or profile.get("real_name") or user.get("real_name") or uid
+                email = profile.get("email", "")
+                title = profile.get("title", "")
 
                 if is_bot or is_app or uid == "USLACKBOT":
                     bot_uids.append(uid)
                     bot_names.append(name)
                     bot_details[uid] = name
+                elif not user.get("deleted", False):
+                    # Build enriched profile for humans
+                    email_domain = email.split("@")[1] if "@" in email else ""
+                    user_profiles[uid] = {
+                        "name": name,
+                        "email": email,
+                        "email_domain": email_domain,
+                        "title": title,
+                        "is_guest": is_guest,
+                        "is_admin": user.get("is_admin", False),
+                        "is_owner": user.get("is_owner", False),
+                    }
 
             cursor = resp.get("response_metadata", {}).get("next_cursor")
             if not cursor:
@@ -100,11 +117,32 @@ def discover_bots_from_api(token: str) -> dict:
     except SlackApiError as e:
         print(f"  Slack API error: {e.response.get('error', 'unknown')}")
 
-    print(f"  Found {len(bot_uids)} bot/app users")
+    # Get internal domain from user.json email (authoritative source)
+    from shared import USER_EMAIL
+    internal_domain = USER_EMAIL.split("@")[1] if "@" in USER_EMAIL else ""
+
+    # Tag each user as internal or external
+    # Key insight: Slack guest users (is_restricted/is_ultra_restricted) are external.
+    # Full workspace members are internal regardless of email domain — this handles
+    # contractors who have their own domains but are part of the team.
+    for uid, p in user_profiles.items():
+        if p.get("is_guest"):
+            p["classification"] = "external"
+        else:
+            p["classification"] = "internal"
+
+    print(f"  Found {len(bot_uids)} bot/app users, {len(user_profiles)} humans")
+    if internal_domain:
+        internal_count = sum(1 for p in user_profiles.values() if p["classification"] == "internal")
+        external_count = sum(1 for p in user_profiles.values() if p["classification"] == "external")
+        print(f"  Internal domain: @{internal_domain} ({internal_count} internal, {external_count} external/guest)")
+
     return {
         "bot_uids": sorted(set(bot_uids)),
         "bot_patterns": sorted(set(bot_names)),
         "bot_details": bot_details,
+        "user_profiles": user_profiles,
+        "internal_domain": internal_domain,
     }
 
 
@@ -209,9 +247,14 @@ def discover_channels(bot_uids: set) -> dict:
 
 # ── People discovery ────────────────────────────────────────────────────────
 
-def discover_people(bot_uids: set) -> dict:
-    """Analyze message frequency to find key people to track."""
+def discover_people(bot_uids: set, user_profiles: dict = None) -> dict:
+    """Analyze message frequency to find key people to track.
+
+    If user_profiles is provided (from Slack API), enriches each person with
+    email, title, company domain, and internal/external classification.
+    """
     users_cache = load_json(MESSAGES_DIR / ".users_cache.json")
+    user_profiles = user_profiles or {}
 
     # Count messages per human user across all channels
     msg_counts = Counter()      # uid -> total messages
@@ -252,51 +295,83 @@ def discover_people(bot_uids: set) -> dict:
             continue
         dms = dm_counts.get(uid, 0)
         channels = len(channel_presence.get(uid, set()))
-        # Score: DMs weighted 3x, channel breadth weighted 2x
         score = (dms * 3) + (total * 0.5) + (channels * 2)
-        scored.append({
+
+        profile = user_profiles.get(uid, {})
+        entry = {
             "name": name,
             "uid": uid,
             "total_messages": total,
             "dm_messages": dms,
             "channels": channels,
             "score": round(score, 1),
-        })
+            "email": profile.get("email", ""),
+            "email_domain": profile.get("email_domain", ""),
+            "title": profile.get("title", ""),
+            "is_guest": profile.get("is_guest", False),
+            "classification": profile.get("classification", "unknown"),
+        }
+        scored.append(entry)
 
     scored.sort(key=lambda x: x["score"], reverse=True)
 
-    # Build tracked_people and priorities
-    tracked = {}
-    deep_reconcile = {}
-    priority_dms = {}
+    print(f"  Discovered {len(scored)} active people")
+    if scored:
+        internal = sum(1 for p in scored if p["classification"] == "internal")
+        external = sum(1 for p in scored if p["classification"] == "external")
+        print(f"  Classification: {internal} internal, {external} external/guest")
 
-    for i, person in enumerate(scored[:20]):  # Top 20
-        name = person["name"]
-        peer_id = sanitize_id(name)
-        if i < 5:
-            priority = "high"
-            deep_reconcile[peer_id] = name
-            priority_dms[person["uid"]] = name
-        elif i < 12:
-            priority = "medium"
-        else:
-            priority = "low"
-
-        tracked[name] = {
-            "type": "internal",
-            "peer_id": peer_id,
-            "priority": priority,
-            "slack_uid": person["uid"],
-            "score": person["score"],
-        }
-
-    print(f"  Discovered {len(tracked)} people to track ({len(deep_reconcile)} high priority)")
     return {
-        "tracked_people": tracked,
-        "deep_reconcile_peers": deep_reconcile,
-        "priority_dm_users": priority_dms,
-        "all_scored": scored[:30],  # Keep top 30 for review
+        "all_scored": scored[:50],
     }
+
+
+# ── Peer merge detection ───────────────────────────────────────────────────
+
+def detect_peer_merges(scored: list[dict], user_profiles: dict) -> dict:
+    """Detect likely duplicate people by name similarity.
+
+    DM channels use Slack usernames (e.g., "jsmith123") which differ
+    from display names ("John Smith"). This finds cases where a scored
+    person's name is likely a username variant of another person.
+
+    Returns: {duplicate_peer_id: canonical_peer_id}
+    """
+    merges = {}
+    names_by_peer = {}
+    for p in scored:
+        peer_id = sanitize_id(p["name"])
+        names_by_peer[peer_id] = p["name"]
+
+    # Build a lookup of last names from display names
+    last_names = {}
+    for p in scored:
+        parts = p["name"].split()
+        if len(parts) >= 2:
+            last = parts[-1].lower()
+            peer_id = sanitize_id(p["name"])
+            last_names.setdefault(last, []).append(peer_id)
+
+    # Check for username-style names that contain a known last name
+    for p in scored:
+        name = p["name"]
+        peer_id = sanitize_id(name)
+        # Skip names that look like real names (have a space)
+        if " " in name:
+            continue
+        # Check if this single-word name contains a last name from another person
+        name_lower = name.lower()
+        for last, peer_ids in last_names.items():
+            if last in name_lower and len(last) >= 3:
+                for canonical in peer_ids:
+                    if canonical != peer_id:
+                        merges[peer_id] = canonical
+                        print(f"  Merge detected: '{name}' -> '{names_by_peer[canonical]}' (shared: {last})")
+                        break
+                if peer_id in merges:
+                    break
+
+    return merges
 
 
 # ── Main ────────────────────────────────────────────────────────────────────
@@ -349,15 +424,33 @@ def main():
         print(f"  Wrote discovered_channels.json ({len(channels['exclude_channels'])} excluded)")
 
     # ── 3. Discover people (heuristic scores for analyze_priorities.py) ──
-    people = discover_people(bot_uids)
+    user_profiles = bots.get("user_profiles", {})
+    internal_domain = bots.get("internal_domain", "")
+    people = discover_people(bot_uids, user_profiles)
+
+    # Detect likely duplicate peers
+    merges = detect_peer_merges(people["all_scored"], user_profiles)
+
+    # Filter out merged duplicates from scored list
+    filtered_scored = [p for p in people["all_scored"] if sanitize_id(p["name"]) not in merges]
 
     # Save scored people data for analyze_priorities.py to use as input
     if not args.dry_run:
         save_json(WORKSPACE / "discovered_people.json", {
-            "scored": people["all_scored"],
+            "scored": filtered_scored,
+            "peer_merges": merges,
+            "internal_domain": internal_domain,
             "discovered_at": datetime.now(timezone.utc).isoformat(),
         })
-        print(f"  Wrote discovered_people.json ({len(people['all_scored'])} scored)")
+        print(f"  Wrote discovered_people.json ({len(filtered_scored)} scored, {len(merges)} merged)")
+
+        # Save user profiles for honcho_slack_sync to use
+        save_json(WORKSPACE / "discovered_profiles.json", {
+            "profiles": user_profiles,
+            "internal_domain": internal_domain,
+            "discovered_at": datetime.now(timezone.utc).isoformat(),
+        })
+        print(f"  Wrote discovered_profiles.json ({len(user_profiles)} profiles)")
     else:
         print(f"\n  Would write discovered_people.json: {len(people['all_scored'])} people scored")
 
@@ -365,11 +458,14 @@ def main():
     print("\nDiscovery complete:")
     print(f"  Bots:     {len(bot_uids)}")
     print(f"  Excluded: {len(channels['exclude_channels'])} channels")
-    print(f"  People:   {len(people['all_scored'])} scored")
+    print(f"  People:   {len(filtered_scored)} scored ({len(merges)} duplicates merged)")
+    if internal_domain:
+        print(f"  Internal: @{internal_domain}")
     if people["all_scored"]:
         print("\n  Top 5 by interaction score:")
         for p in people["all_scored"][:5]:
-            print(f"    {p['name']:25} score={p['score']:.0f}  DMs={p['dm_messages']}  channels={p['channels']}")
+            tag = "guest" if p.get("is_guest") else p.get("classification", "")
+            print(f"    {p['name']:25} score={p['score']:.0f}  DMs={p['dm_messages']}  [{tag}]  {p.get('email', '')}")
     print("\n  Priority ranking will be determined by analyze_priorities.py (LLM)")
 
 

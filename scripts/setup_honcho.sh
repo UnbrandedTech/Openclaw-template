@@ -1,15 +1,17 @@
 #!/bin/bash
 # Set up Honcho memory system
 
-echo "Honcho setup options:"
-echo "  1. Cloud Honcho (honcho.dev, easiest)"
-echo "  2. Self-hosted (PostgreSQL + Ollama, more control)"
-echo ""
 if [ "${HONCHO_SELF_HOSTED:-}" = "true" ]; then
     HONCHO_OPTION="2"
 else
-    HONCHO_OPTION="1"
-    log "Using Cloud Honcho (default). Set HONCHO_SELF_HOSTED=true to self-host."
+    wizard_choose "How would you like to run Honcho (the AI's memory system)?" \
+        "Cloud Honcho (honcho.dev, easiest)" \
+        "Self-hosted (PostgreSQL + Ollama, more control)"
+
+    case "$REPLY" in
+        *Self-hosted*|2) HONCHO_OPTION="2" ;;
+        *)               HONCHO_OPTION="1" ;;
+    esac
 fi
 
 if [ "$HONCHO_OPTION" = "2" ]; then
@@ -62,6 +64,32 @@ if [ "$HONCHO_OPTION" = "2" ]; then
         echo 'export OLLAMA_KEEP_ALIVE=24h' >> "$SHELL_RC"
     fi
 
+    # Run Honcho migrations if tables are missing (e.g., after uninstall)
+    HONCHO_DIR="${HONCHO_PROJECT_DIR:-$HOME/Projects/Personal/honcho}"
+    if [ -f "$HONCHO_DIR/alembic.ini" ]; then
+        TABLES=$(psql -d honcho -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | tr -d ' ')
+        if [ "${TABLES:-0}" -lt 5 ]; then
+            log "Running Honcho migrations..."
+            (cd "$HONCHO_DIR" && "$HONCHO_DIR/.venv/bin/alembic" upgrade heads 2>&1) || warn "Alembic migrations had errors"
+        fi
+    fi
+
+    # Start/restart Honcho server
+    if ! curl -s http://localhost:18790/ &>/dev/null; then
+        if [ -f "$HONCHO_DIR/src/main.py" ]; then
+            log "Starting Honcho server..."
+            (cd "$HONCHO_DIR" && "$HONCHO_DIR/.venv/bin/fastapi" run src/main.py --port 18790 --host 127.0.0.1 &>/dev/null &)
+            sleep 3
+            if curl -s http://localhost:18790/ &>/dev/null; then
+                log "Honcho server started"
+            else
+                warn "Honcho server may not have started — check manually"
+            fi
+        fi
+    else
+        log "Honcho server already running"
+    fi
+
     log "Self-hosted Honcho ready (localhost:18790)"
 else
     warn "Cloud Honcho selected. Sign up at honcho.dev and add your API key to the config."
@@ -70,3 +98,45 @@ fi
 # Install Python client
 "$HOME/.openclaw/venv/bin/pip" install honcho-ai
 log "Honcho Python client installed"
+
+# Install OpenClaw Honcho plugin
+if command -v openclaw &>/dev/null; then
+    if ! openclaw plugins list 2>/dev/null | grep -q "openclaw-honcho"; then
+        log "Installing OpenClaw Honcho plugin..."
+        openclaw plugins install @honcho-ai/openclaw-honcho 2>/dev/null || warn "Could not install Honcho plugin (install manually: openclaw plugins install @honcho-ai/openclaw-honcho)"
+    else
+        log "OpenClaw Honcho plugin already installed"
+    fi
+
+    # Configure the plugin in openclaw.json
+    if [ -f "$OPENCLAW_DIR/openclaw.json" ]; then
+        HONCHO_URL="http://localhost:18790"
+        if [ "$HONCHO_OPTION" = "1" ]; then
+            HONCHO_URL="https://api.honcho.dev"
+        fi
+
+        python3 -c "
+import json, os
+config_path = '$OPENCLAW_DIR/openclaw.json'
+with open(config_path) as f:
+    config = json.load(f)
+
+# Configure Honcho plugin
+plugins = config.setdefault('plugins', {})
+entries = plugins.setdefault('entries', {})
+honcho = entries.setdefault('openclaw-honcho', {})
+honcho_cfg = honcho.setdefault('config', {})
+honcho_cfg['workspaceId'] = 'openclaw'
+honcho_cfg['baseUrl'] = '$HONCHO_URL'
+
+# Restore fields that plugin install may have wiped
+config.setdefault('gateway', {})['mode'] = 'local'
+
+with open(config_path, 'w') as f:
+    json.dump(config, f, indent=2)
+print('  Configured Honcho plugin + restored gateway.mode')
+" 2>/dev/null
+    fi
+else
+    warn "OpenClaw not installed yet — Honcho plugin will be configured after OpenClaw install"
+fi

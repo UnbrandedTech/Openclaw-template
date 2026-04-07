@@ -299,33 +299,80 @@ def extract_meeting_name(subject: str) -> str:
 
 
 def parse_thread_content(raw_json: str) -> str:
-    """Extract readable text from gog gmail read --json output."""
+    """Extract readable text from gog gmail read --json output.
+
+    Handles the Gmail API format returned by gogcli:
+      {"thread": {"messages": [{"payload": {"headers": [...], "parts": [...]}}]}}
+    """
     try:
         data = json.loads(raw_json)
     except json.JSONDecodeError:
         return raw_json
 
-    messages = data if isinstance(data, list) else data.get("messages", [data])
+    # gogcli wraps in {"thread": {"messages": [...]}}
+    if isinstance(data, dict) and "thread" in data:
+        messages = data["thread"].get("messages", [])
+    elif isinstance(data, dict) and "messages" in data:
+        messages = data["messages"]
+    elif isinstance(data, list):
+        messages = data
+    else:
+        messages = [data]
 
-    parts = []
+    output_parts = []
     for msg in messages:
-        if isinstance(msg, dict):
-            subject = msg.get("subject", "")
-            from_addr = msg.get("from", "")
-            date = msg.get("date", "")
-            body = msg.get("body", msg.get("text", msg.get("snippet", "")))
+        if not isinstance(msg, dict):
+            if isinstance(msg, str):
+                output_parts.append(msg)
+            continue
 
-            parts.append(f"From: {from_addr}")
-            parts.append(f"Date: {date}")
-            parts.append(f"Subject: {subject}")
-            parts.append("")
-            if isinstance(body, str):
-                parts.append(body)
-            parts.append("\n---\n")
-        elif isinstance(msg, str):
-            parts.append(msg)
+        # Extract headers (Gmail API format)
+        payload = msg.get("payload", {})
+        headers = {h["name"].lower(): h["value"] for h in payload.get("headers", []) if "name" in h and "value" in h}
+        from_addr = headers.get("from", msg.get("from", ""))
+        date = headers.get("date", msg.get("date", ""))
+        subject = headers.get("subject", msg.get("subject", ""))
 
-    return "\n".join(parts) if parts else raw_json
+        # Extract body from payload parts (Gmail API: base64url encoded)
+        body = ""
+        parts = payload.get("parts", [])
+        if parts:
+            for part in parts:
+                if part.get("mimeType") == "text/plain":
+                    body_data = part.get("body", {}).get("data", "")
+                    if body_data:
+                        import base64
+                        body = base64.urlsafe_b64decode(body_data + "==").decode("utf-8", errors="replace")
+                    break
+            if not body:
+                # Fall back to first part with data
+                for part in parts:
+                    body_data = part.get("body", {}).get("data", "")
+                    if body_data:
+                        import base64
+                        body = base64.urlsafe_b64decode(body_data + "==").decode("utf-8", errors="replace")
+                        break
+
+        # Fall back to direct body on payload
+        if not body:
+            direct_data = payload.get("body", {}).get("data", "")
+            if direct_data:
+                import base64
+                body = base64.urlsafe_b64decode(direct_data + "==").decode("utf-8", errors="replace")
+
+        # Last resort: snippet or flat fields
+        if not body:
+            body = msg.get("snippet", msg.get("body", msg.get("text", "")))
+
+        output_parts.append(f"From: {from_addr}")
+        output_parts.append(f"Date: {date}")
+        output_parts.append(f"Subject: {subject}")
+        output_parts.append("")
+        if isinstance(body, str):
+            output_parts.append(body)
+        output_parts.append("\n---\n")
+
+    return "\n".join(output_parts) if output_parts else raw_json
 
 
 # ── Action item extraction ──────────────────────────────────────────────────

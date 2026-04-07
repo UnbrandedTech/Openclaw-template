@@ -262,7 +262,7 @@ if _env_file.exists():
 
 # ── LLM calling ──────────────────────────────────────────────────────────────
 
-OPENCLAW_CONFIG = Path.home() / ".openclaw" / "openclaw.json"
+OPENCLAW_CONFIG = Path.home() / ".openclaw" / "openclaw-sync.json"
 
 
 def call_llm(prompt: str, role: str = "fast", max_tokens: int = 4096) -> str:
@@ -321,6 +321,48 @@ def _get_vertex_token() -> str:
     return token
 
 
+def check_llm_ready():
+    """Pre-flight check that the configured LLM provider is reachable.
+
+    Call this at the start of scripts that make LLM calls to fail fast
+    with a clear message instead of failing mid-run.
+    """
+    config = load_json(OPENCLAW_CONFIG)
+    models = config.get("models", {})
+    fast_spec = models.get("fast", "")
+
+    if not fast_spec or "/" not in fast_spec:
+        print("ERROR: No model configured in openclaw-sync.json", file=sys.stderr)
+        sys.exit(1)
+
+    provider = fast_spec.split("/", 1)[0]
+
+    if provider == "vertex":
+        result = subprocess.run(
+            ["gcloud", "auth", "application-default", "print-access-token"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if not result.stdout.strip():
+            print("ERROR: GCP access token expired or missing.", file=sys.stderr)
+            print("  Run: gcloud auth application-default login", file=sys.stderr)
+            sys.exit(1)
+    elif provider == "openai":
+        if not get_secret("OPENAI_API_KEY"):
+            print("ERROR: OPENAI_API_KEY not set.", file=sys.stderr)
+            sys.exit(1)
+    elif provider == "anthropic":
+        if not get_secret("ANTHROPIC_API_KEY"):
+            print("ERROR: ANTHROPIC_API_KEY not set.", file=sys.stderr)
+            sys.exit(1)
+    elif provider == "ollama":
+        try:
+            urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3)
+        except Exception:
+            print("ERROR: Ollama not reachable at localhost:11434.", file=sys.stderr)
+            print("  Run: ollama serve", file=sys.stderr)
+            sys.exit(1)
+
+
 def _call_vertex(profiles: dict, model_name: str, prompt: str, max_tokens: int) -> str:
     """Call a model via Vertex AI (handles both Google and Anthropic models)."""
     profile = profiles.get("vertex:default", {})
@@ -350,7 +392,7 @@ def _call_vertex(profiles: dict, model_name: str, prompt: str, max_tokens: int) 
             f"/locations/{region}/publishers/google/models/{model_name}:generateContent"
         )
         body = json.dumps({
-            "contents": [{"parts": [{"text": prompt}]}],
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {"maxOutputTokens": max_tokens},
         }).encode()
 
