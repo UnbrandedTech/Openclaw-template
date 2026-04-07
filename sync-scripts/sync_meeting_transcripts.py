@@ -32,7 +32,8 @@ from shared import WORKSPACE, VAULT_PATH, save_json as _atomic_save_json, USER_N
 EMAILS_DIR = WORKSPACE / "transcriptions"
 STATE_FILE = WORKSPACE / "memory/transcript-sync-state.json"
 GOG = Path.home() / ".local/bin/gog"
-ACCOUNT = os.environ.get("GOG_ACCOUNT", "")
+# Use get_secret so this works whether GOG_ACCOUNT is in keychain, env, or .env file.
+ACCOUNT = get_secret("GOG_ACCOUNT")
 
 # Load email provider config from user.json
 _user_cfg = load_json(WORKSPACE / "user.json")

@@ -16,7 +16,7 @@ import argparse
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from shared import MESSAGES_DIR, load_json, save_json, atomic_write_text, script_lock, get_secret
+from shared import MESSAGES_DIR, load_json, save_json, atomic_write_text, script_lock, get_secret, get_ssl_context
 from config import PRIORITY_CHANNELS, PRIORITY_DM_USERS
 
 try:
@@ -371,7 +371,7 @@ def main():
 
         MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
 
-        client = WebClient(token=token)
+        client = WebClient(token=token, ssl=get_ssl_context())
         state = load_state()
 
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting Slack sync...")

@@ -248,6 +248,24 @@ def set_secret(name: str, value: str) -> bool:
     return False
 
 
+# ── HTTPS / SSL helpers ──────────────────────────────────────────────────────
+
+def get_ssl_context():
+    """Build an SSL context backed by certifi's CA bundle.
+
+    macOS Python.org installers don't populate the system trust store, which
+    breaks any HTTPS call from the venv (e.g. slack_sdk's urllib path) until
+    the user runs Install Certificates.command. Using certifi sidesteps that.
+    Returns None if certifi isn't installed (caller falls back to defaults).
+    """
+    try:
+        import ssl
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return None
+
+
 # ── .env loading ──────────────────────────────────────────────────────────────
 
 _env_file = WORKSPACE / ".env"

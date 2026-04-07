@@ -533,8 +533,10 @@ if should_run_phase; then
     done
     log "Copied $(ls "$SCRIPT_DIR"/sync-scripts/*.py | wc -l | tr -d ' ') scripts to workspace"
 
-    # Install Python dependencies for scripts
-    "$HOME/.openclaw/venv/bin/pip" install slack-sdk honcho-ai
+    # Install Python dependencies for scripts.
+    # certifi is required so slack_sdk (urllib-based) has a working CA bundle
+    # on macOS Python.org installs that don't populate the system trust store.
+    "$HOME/.openclaw/venv/bin/pip" install slack-sdk honcho-ai certifi
     log "Installed Python dependencies"
 else
     log "Skipping Phase 4 (--from $START_FROM)"

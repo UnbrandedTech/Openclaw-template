@@ -21,7 +21,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from shared import WORKSPACE, MESSAGES_DIR, save_json, load_json, USER_SLACK_ID, sanitize_id, get_secret
+from shared import WORKSPACE, MESSAGES_DIR, save_json, load_json, USER_SLACK_ID, sanitize_id, get_secret, get_ssl_context
 
 try:
     from slack_sdk import WebClient
@@ -69,7 +69,7 @@ def discover_bots_from_api(token: str) -> dict:
         print("  slack-sdk not installed, skipping API bot discovery")
         return {"bot_uids": [], "bot_patterns": [], "bot_details": {}, "user_profiles": {}}
 
-    client = WebClient(token=token)
+    client = WebClient(token=token, ssl=get_ssl_context())
     bot_uids = []
     bot_names = []
     bot_details = {}

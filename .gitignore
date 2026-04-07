@@ -3,6 +3,9 @@
 .slack_env
 .google_env
 templates/client_secret.json
+# Service account / credential keys (e.g. openclaw-ravi-key.json)
+*-key.json
+*service-account*.json
 node_modules/
 
 # OS

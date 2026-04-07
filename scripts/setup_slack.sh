@@ -84,6 +84,6 @@ else
     warn "Skipping Slack token setup. Add tokens later with: ./setup.sh --from 6"
 fi
 
-# Install SDK
-"$HOME/.openclaw/venv/bin/pip" install slack-sdk
+# Install SDK (+ certifi so urllib HTTPS calls work on macOS Python.org installs)
+"$HOME/.openclaw/venv/bin/pip" install slack-sdk certifi
 log "Slack SDK installed"
