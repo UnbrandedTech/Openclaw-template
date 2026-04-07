@@ -29,6 +29,8 @@ if [ "$EMAIL_PROVIDER" = "google" ]; then
     if ! command -v gog &>/dev/null; then
         echo "Installing gogcli..."
         TMPDIR=$(mktemp -d)
+        # gogcli is a Go program, so we need both `make` (drives the build)
+        # and `go` (does the actual compile). Check both before attempting.
         if ! command -v make &>/dev/null; then
             err "Cannot build gogcli: 'make' not found."
             if [ "$PLATFORM" = "macos" ]; then
@@ -36,6 +38,21 @@ if [ "$EMAIL_PROVIDER" = "google" ]; then
             else
                 err "  Install build tools: sudo apt-get install build-essential (Debian) or sudo dnf install make gcc (Fedora)"
             fi
+            warn "Skipping gogcli installation."
+        elif ! command -v go &>/dev/null; then
+            err "Cannot build gogcli: 'go' not found."
+            if [ "$PLATFORM" = "macos" ]; then
+                err "  Install Go: brew install go"
+            elif [ "$DISTRO" = "debian" ]; then
+                err "  Install Go: sudo apt-get install golang-go"
+            elif [ "$DISTRO" = "fedora" ]; then
+                err "  Install Go: sudo dnf install golang"
+            elif [ "$DISTRO" = "arch" ]; then
+                err "  Install Go: sudo pacman -S go"
+            else
+                err "  Install Go: https://go.dev/doc/install"
+            fi
+            err "  Then re-run: ./setup.sh --from 8"
             warn "Skipping gogcli installation."
         else
             (
@@ -46,13 +63,26 @@ if [ "$EMAIL_PROVIDER" = "google" ]; then
                 mkdir -p ~/.local/bin
                 cp gog ~/.local/bin/
             )
+            BUILD_STATUS=$?
             rm -rf "$TMPDIR"
 
-            if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
-                echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
-                export PATH="$HOME/.local/bin:$PATH"
+            # Don't trust the subshell — verify the binary actually landed.
+            # Phase 8 used to log "installed" unconditionally, then transcript
+            # sync would blow up much later with FileNotFoundError on `gog`.
+            if [ $BUILD_STATUS -ne 0 ] || [ ! -x "$HOME/.local/bin/gog" ]; then
+                err "gogcli build failed — '$HOME/.local/bin/gog' not present after build."
+                err "  Try manually:"
+                err "    cd /tmp && git clone https://github.com/steipete/gogcli.git"
+                err "    cd gogcli && make && cp gog ~/.local/bin/"
+                err "  Then re-run: ./setup.sh --from 8"
+                warn "Skipping gogcli configuration — Gmail transcript sync will be unavailable."
+            else
+                if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
+                    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_RC"
+                    export PATH="$HOME/.local/bin:$PATH"
+                fi
+                log "gogcli installed to ~/.local/bin/gog"
             fi
-            log "gogcli installed to ~/.local/bin/gog"
         fi
     else
         log "gogcli already installed"

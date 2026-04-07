@@ -528,9 +528,19 @@ def save_state(state: dict):
 # ── Main ────────────────────────────────────────────────────────────────────
 
 def main():
-    if EMAIL_PROVIDER == "google" and not ACCOUNT:
-        print("ERROR: Set GOG_ACCOUNT environment variable (email_provider is 'google').", file=sys.stderr)
-        sys.exit(1)
+    if EMAIL_PROVIDER == "google":
+        if not GOG.exists():
+            print(f"ERROR: gogcli not installed at {GOG}", file=sys.stderr)
+            print("  Phase 8 of setup.sh installs it; if that was skipped or failed,", file=sys.stderr)
+            print("  install Go and re-run: ./setup.sh --from 8", file=sys.stderr)
+            print("  Or manually: brew install go && cd /tmp && \\", file=sys.stderr)
+            print("    git clone https://github.com/steipete/gogcli.git && \\", file=sys.stderr)
+            print("    cd gogcli && make && cp gog ~/.local/bin/", file=sys.stderr)
+            sys.exit(1)
+        if not ACCOUNT:
+            print("ERROR: GOG_ACCOUNT not set (email_provider is 'google').", file=sys.stderr)
+            print("  Re-run setup phase 8 to authenticate gogcli, or set GOG_ACCOUNT manually.", file=sys.stderr)
+            sys.exit(1)
 
     full_mode = "--full" in sys.argv
     skip_actions = "--skip-actions" in sys.argv
