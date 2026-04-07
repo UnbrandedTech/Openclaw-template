@@ -100,6 +100,24 @@ if ! command -v jq &>/dev/null; then
     pkg_install jq
 fi
 
+# ── Go (required for building gogcli in Phase 8) ───────────────────
+if ! command -v go &>/dev/null; then
+    log "Installing Go (needed to build gogcli for Gmail sync)..."
+    if [ "$PLATFORM" = "macos" ]; then
+        brew install go
+    elif [ "$DISTRO" = "debian" ]; then
+        sudo apt-get install -y golang-go
+    elif [ "$DISTRO" = "fedora" ]; then
+        sudo dnf install -y golang
+    elif [ "$DISTRO" = "arch" ]; then
+        sudo pacman -S --noconfirm go
+    else
+        warn "Install Go manually: https://go.dev/doc/install"
+    fi
+else
+    log "Go $(go version 2>/dev/null | awk '{print $3}') already installed"
+fi
+
 # ── Google Cloud SDK ────────────────────────────────────────────────
 if ! command -v gcloud &>/dev/null; then
     log "Installing Google Cloud SDK..."
