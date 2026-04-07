@@ -755,6 +755,50 @@ if [ "$AI_PROVIDER" = "vertex" ]; then
         done
     fi
 
+    # ── Optional: service account key for unattended Vertex AI access ──
+    # User OAuth tokens expire and need periodic re-auth (invalid_rapt errors).
+    # Service account keys never expire — better for background sync scripts.
+    GCP_SA_KEY="$HOME/.config/gcloud/openclaw-vertex-key.json"
+    if [ "$GCP_OK" = true ] && [ ! -f "$GCP_SA_KEY" ]; then
+        echo ""
+        if [ "$WIZARD" = true ]; then
+            gum style --bold "Service Account Key (recommended)"
+            echo ""
+            gum style "User OAuth credentials expire periodically and need re-authentication."
+            gum style "A service account key never expires — better for background sync"
+            gum style "scripts and the agent gateway."
+        else
+            echo "Service Account Key (recommended)"
+            echo "User OAuth credentials expire and need re-authentication."
+            echo "A service account key never expires."
+        fi
+        echo ""
+        if wizard_confirm "Create a service account key for Vertex AI? (recommended)"; then
+            log "Creating service account openclaw-vertex..."
+            gcloud iam service-accounts create openclaw-vertex \
+                --display-name="OpenClaw Vertex AI" \
+                --project="$GCP_PROJECT" 2>/dev/null || warn "Service account may already exist"
+
+            log "Granting Vertex AI User role..."
+            gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
+                --member="serviceAccount:openclaw-vertex@${GCP_PROJECT}.iam.gserviceaccount.com" \
+                --role="roles/aiplatform.user" \
+                --condition=None 2>/dev/null && log "Role granted" || warn "Could not grant role"
+
+            log "Creating service account key..."
+            mkdir -p "$(dirname "$GCP_SA_KEY")"
+            gcloud iam service-accounts keys create "$GCP_SA_KEY" \
+                --iam-account="openclaw-vertex@${GCP_PROJECT}.iam.gserviceaccount.com" 2>/dev/null && {
+                chmod 600 "$GCP_SA_KEY"
+                log "Service account key saved to $GCP_SA_KEY"
+                export GOOGLE_APPLICATION_CREDENTIALS="$GCP_SA_KEY"
+            } || warn "Could not create key — falling back to user OAuth"
+        fi
+    elif [ -f "$GCP_SA_KEY" ]; then
+        log "Service account key already exists at $GCP_SA_KEY"
+        export GOOGLE_APPLICATION_CREDENTIALS="$GCP_SA_KEY"
+    fi
+
     # Test Vertex AI models
     if [ "$GCP_OK" = true ]; then
         ACCESS_TOKEN=$(gcloud auth application-default print-access-token 2>/dev/null)
@@ -1007,8 +1051,12 @@ if '$AI_PROVIDER' == 'vertex':
     env_vars['GOOGLE_CLOUD_LOCATION'] = '${GCP_REGION:-us-east5}'
     env_vars['ANTHROPIC_VERTEX_PROJECT_ID'] = '$GCP_PROJECT'
     env_vars['ANTHROPIC_VERTEX_REGION'] = '${GCP_REGION:-us-east5}'
+    # Prefer service account key (never expires) over user ADC (needs re-auth)
+    sa_key = os.path.expanduser('~/.config/gcloud/openclaw-vertex-key.json')
     adc_path = os.path.expanduser('~/.config/gcloud/application_default_credentials.json')
-    if os.path.exists(adc_path):
+    if os.path.exists(sa_key):
+        env_vars['GOOGLE_APPLICATION_CREDENTIALS'] = sa_key
+    elif os.path.exists(adc_path):
         env_vars['GOOGLE_APPLICATION_CREDENTIALS'] = adc_path
 
 # Plugin allowlist (only load what we need)
