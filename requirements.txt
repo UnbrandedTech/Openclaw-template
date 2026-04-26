@@ -8,7 +8,7 @@ honcho-ai>=0.1.0,<3.0
 certifi>=2024.2.2
 
 # Google Workspace (gmail_standup_sync.py)
-google-auth>=2.30.0,<3.0
+google-auth>=2.49.2,<3.0
 google-auth-oauthlib>=1.2.0,<2.0
 google-api-python-client>=2.130.0,<3.0
 
