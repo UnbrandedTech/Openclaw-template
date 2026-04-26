@@ -10,7 +10,7 @@ certifi>=2024.2.2
 # Google Workspace (gmail_standup_sync.py)
 google-auth>=2.30.0,<3.0
 google-auth-oauthlib>=1.2.0,<2.0
-google-api-python-client>=2.130.0,<3.0
+google-api-python-client>=2.194.0,<3.0
 
 # Calendar sync
 vdirsyncer>=0.19.0,<1.0
