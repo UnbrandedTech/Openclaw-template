@@ -5,7 +5,7 @@ honcho-ai>=0.1.0,<3.0
 
 # CA bundle — needed so slack_sdk's urllib HTTPS calls succeed on macOS
 # Python.org installs (which ship with no system trust store).
-certifi>=2024.2.2
+certifi>=2026.4.22
 
 # Google Workspace (gmail_standup_sync.py)
 google-auth>=2.30.0,<3.0
